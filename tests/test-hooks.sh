@@ -24,7 +24,7 @@ unset CLAUDE_ROLE HERDR_ENV MULTI_AGENT_HERDR_NAME
 work="$root/.test-work"
 case "$root/" in
     /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*|"${TMPDIR:-/nonexistent}"*)
-        work="${XDG_CACHE_HOME:-$HOME/.cache}/claude-code-herdr-test-work" ;;
+        work="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-agent-pool-test-work" ;;
 esac
 rm -rf "$work" && mkdir -p "$work"
 trap 'rm -rf "$work"' EXIT
@@ -178,7 +178,7 @@ expect 2 "settings: invalid file, main worktree guarded" "$g" "$(bash_cmd 'git c
 w="$hooks/guard-main-worktree.sh"
 expect 2 "edit: file in main worktree"                "$w" "$(file_op "$on/a/b/new.md")"
 expect 0 "edit: file in linked worktree"              "$w" "$(file_op "$work/on-x/new.md")"
-expect 0 "edit: file outside git"                     "$w" "$(file_op "/nonexistent-claude-code-herdr-test/loose.md")"
+expect 0 "edit: file outside git"                     "$w" "$(file_op "/nonexistent-herdr-agent-pool-test/loose.md")"
 expect 0 "edit: repo without the plugin"              "$w" "$(file_op "$off/new.md")"
 CLAUDE_ROLE=integrator expect 0 "edit: integrator"    "$w" "$(file_op "$on/new.md")"
 expect 0 "edit: plugin set to false"                  "$w" "$(file_op "$dis/new.md")"

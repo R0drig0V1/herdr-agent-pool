@@ -10,8 +10,10 @@
 # Usage: integrate-pr.sh <PR number> [--union-rows PATH]...
 #
 # Only for CLAUDE_ROLE=integrator, and inside herdr only for the session whose herdr agent is
-# the integrator's name (the role and the name come from the environment, so the script checks
-# them against the live pane; the Bash guard also keeps other sessions from running it).
+# the integrator's name; in pool mode that agent must also be one of `integrator_pool`, and
+# the script refuses to run outside herdr. The role and the name come from the environment,
+# so the live pane is the proof; pool-state.py checks the same for the claims and the lock,
+# and the Bash guard also keeps other sessions from running it.
 # Single mode: run it in the main worktree (on the base branch). Pool mode: run it in your own
 # verify worktree (detached HEAD), holding the PR's claim (pool-state.py claim; the script
 # heartbeats it and releases it on every outcome but a lost claim).
@@ -137,6 +139,9 @@ if [[ "$mode" == pool || "${HERDR_ENV:-}" == 1 ]]; then
     pane=$(herdr pane current --current 2>/dev/null | jq -r '.result.pane.pane_id // empty')
     agent=$(herdr agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .name // empty')
     [[ -n "$agent" && "$agent" == "$me" ]] || stop "this pane's herdr agent is '${agent:-none}', not $me"
+    if [[ "$mode" == pool ]] && ! jq -e --arg a "$agent" '.integrator_pool | index($a)' <<<"$config" >/dev/null; then
+        stop "this pane's herdr agent, $agent, is not a member of the integrator pool ($(jq -r '.integrator_pool | join(", ")' <<<"$config"))"
+    fi
 fi
 top=$(git rev-parse --show-toplevel) || stop "not inside a git repository"
 cd "$top" || exit 2

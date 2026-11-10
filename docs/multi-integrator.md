@@ -213,12 +213,19 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 \* Allowed by the guard because these roles start and message agents; the rule "never answer
 another agent's dialog" stays a rule of their skills and prompts.
 
-The roles come from environment variables, so they are defended in three layers.
+The roles come from environment variables, which any session can set, so the real boundary
+is herdr's own record of who runs in which pane.
 
-1. The guard blocks any command that sets one of those variables.
-2. The guard blocks the role-only scripts for sessions without the role.
-3. `integrate-pr.sh` checks that the herdr agent of its own pane is the integrator it claims
-   to be.
+1. **The boundary.** In pool mode, `pool-state.py` refuses claim, release, heartbeat, bounce,
+   `lock run` and the plan reports unless the herdr agent of the calling pane is a member of
+   `integrator_pool` (or the coordinator, for `lock run` and `report done`), and `--owner` is
+   that agent. When herdr cannot answer, it refuses (fail closed). `integrate-pr.sh` requires
+   the same membership before it touches anything.
+2. **The guard** blocks commands that set an identity variable. It parses the command prefix
+   the way the shell does, so `env -u NAME`, `env -C DIR`, `env -S 'STRING'`, `exec -a` and
+   `time -o` cannot hide an assignment.
+3. **The guard** blocks the role-only scripts for sessions without the role, also when they
+   run through an interpreter (`bash script.sh`, `python3 [-I] script.py`).
 
 The guards stay guardrails, not a sandbox (README, Limitations): a script file of the
 agent's own is not inspected.

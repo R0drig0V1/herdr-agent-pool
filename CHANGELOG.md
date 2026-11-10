@@ -103,6 +103,21 @@ plugin id are still `claude-code-herdr` and `multi-agent-herdr@claude-code-herdr
   - an invalid `.claude/multi-agent-herdr.json` fails closed (no role keeps its rights;
     the file itself may be edited);
   - `cleanup-worktree.sh` matches a merged PR by its head commit, not only by its name.
+- After the second review (PR #3):
+  - the identity boundary is now herdr itself: in pool mode, `pool-state.py` (claim,
+    release, heartbeat, bounce, lock run, report add/done) and `integrate-pr.sh` require
+    the calling pane's herdr agent to be a pool member (the coordinator may also
+    `lock run` and `report done`), and `--owner` to be that agent; they refuse when herdr
+    cannot answer;
+  - the guard parses `env`/`exec`/`time` options that take arguments (`-u`, `-C`,
+    `-S 'STRING'`, `-a`, `-o`), and resolves `bash script.sh` and `python3 script.py` to
+    the script;
+  - combined short flags (`-uf`, `-fu`, `-ud`) count as force or delete on a protected
+    branch;
+  - `lock run --max-seconds` kills the command's whole process group;
+  - `missing_since` is cleared when the owner is listed again;
+  - `herdr agent list` has a 10 s timeout;
+  - stale claims moved aside are deleted, and `claims/.lock` is mode 0600.
 - Single mode: `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills go through
   `resource-budget.py` (an invalid `resources.json` fails them), and `integrate` cleans up
   merged worktrees.
