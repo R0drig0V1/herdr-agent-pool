@@ -4,7 +4,7 @@
 # guards' role rules, claim-integrator.sh and the SessionStart hook for the coordinator and pool
 # members, agents-in-repo.py's worktree filters, pool-state.py (claim races, stale claims,
 # bounces, the merge lock, plan reports), union-rows.py, integrate-pr.sh end to end, and
-# integrator-pool.sh (route, scale, spawn, stop) and cleanup-worktree.sh. Part of claude-code-herdr.
+# integrator-pool.sh (route, scale, spawn, stop) and cleanup-worktree.sh. Part of herdr-agent-pool.
 #
 # Usage: tests/test-pool.sh        (exit code = number of failed cases)
 #

@@ -17,7 +17,7 @@ scripts/     check.sh (all checks), integrator.sh, coordinator.sh (pool mode); o
 
 The workflow itself (skills, agents, guard hooks, notifications, `new-worktree.sh`,
 `verify-merge.sh`) comes from the `multi-agent-herdr` plugin
-(https://github.com/R0drig0V1/claude-code-herdr), enabled in `.claude/settings.json`. It runs
+(https://github.com/R0drig0V1/herdr-agent-pool), enabled in `.claude/settings.json`. It runs
 inside herdr (https://herdr.dev).
 
 ## Commands (run from the repo root)

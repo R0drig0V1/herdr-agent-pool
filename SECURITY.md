@@ -1,4 +1,4 @@
-<!-- Security policy of claude-code-herdr: how to report a vulnerability privately and what is in scope. -->
+<!-- Security policy of herdr-agent-pool: how to report a vulnerability privately and what is in scope. -->
 
 # Security policy
 
@@ -6,7 +6,7 @@
 
 Please do not open a public issue, pull request or discussion for a vulnerability. Report it
 privately through GitHub: **Security** tab → **Report a vulnerability**
-(https://github.com/R0drig0V1/claude-code-herdr/security/advisories/new).
+(https://github.com/R0drig0V1/herdr-agent-pool/security/advisories/new).
 
 Include what you found, how to reproduce it (a command or a minimal repository is ideal), the
 version or commit, and its impact. You will get a first answer within a week. A fix is

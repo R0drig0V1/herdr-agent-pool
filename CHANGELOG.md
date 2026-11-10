@@ -1,4 +1,4 @@
-<!-- Release history of claude-code-herdr, in Keep a Changelog format. -->
+<!-- Release history of herdr-agent-pool, in Keep a Changelog format. -->
 
 # Changelog
 
@@ -9,6 +9,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ## [0.2.0] - 2026-11-09
+
+This release moved to its own repository,
+[herdr-agent-pool](https://github.com/R0drig0V1/herdr-agent-pool), which carries the full
+history of [claude-code-herdr](https://github.com/R0drig0V1/claude-code-herdr). That one keeps
+the original single-integrator plugin unchanged. The URLs in the README, `install.sh`,
+`plugin.json`, the template settings and SECURITY.md point here; the marketplace name and the
+plugin id are still `claude-code-herdr` and `multi-agent-herdr@claude-code-herdr`.
 
 ### Added
 - **Pool mode** (opt-in, docs/multi-integrator.md): an `integrators` object in

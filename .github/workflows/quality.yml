@@ -1,4 +1,4 @@
-# Code quality and security gates of claude-code-herdr (docs/code-quality.md): ruff and lizard
+# Code quality and security gates of herdr-agent-pool (docs/code-quality.md): ruff and lizard
 # for the Python files, zizmor and actionlint for the workflows, gitleaks for secrets.
 # Every job fails on findings; the thresholds come from the code as it was measured on
 # 2026-11-07, so the first run is green and any regression fails.

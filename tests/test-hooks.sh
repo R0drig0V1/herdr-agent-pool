@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke tests for the plugin's hooks, installer and agents-in-repo.py, run in throwaway git
-# repositories. Part of claude-code-herdr (ported from claude-code-multi-agent 0.1.0).
+# repositories. Part of herdr-agent-pool (ported from claude-code-multi-agent 0.1.0).
 #
 # Usage: tests/test-hooks.sh        (exit code = number of failed cases)
 #

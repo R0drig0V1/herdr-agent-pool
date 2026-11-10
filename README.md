@@ -1,16 +1,22 @@
 <!--
-README of claude-code-herdr: what the multi-agent-herdr plugin does, how to install it or
-migrate to it from multi-agent, the coordination rules every agent follows, and where herdr
-command syntax comes from.
+README of herdr-agent-pool: what the multi-agent-herdr plugin does (one integrator, or a
+coordinator plus a pool of parallel integrators), how to install it, the coordination rules
+every agent follows, and where herdr command syntax comes from.
 -->
 
-# claude-code-herdr
+# herdr-agent-pool
 
-A [Claude Code](https://code.claude.com) plugin, **`multi-agent-herdr`**, for running **several
+A [Claude Code](https://code.claude.com) plugin, **`multi-agent-herdr`**, for running **many
 Claude agents in parallel on one repository inside [herdr](https://herdr.dev)** without them
-stepping on each other or on `main`. It replaces the
-[multi-agent](https://github.com/R0drig0V1/claude-code-multi-agent) plugin (same workflow,
-ported and made herdr native); do not enable both in one project.
+stepping on each other or on `main`: a coordinator, a pool of integrators that merge in
+parallel, resources negotiated on one machine, and finished work cleaned up.
+
+It grew out of [claude-code-herdr](https://github.com/R0drig0V1/claude-code-herdr), which keeps
+the original single-integrator plugin. This repository carries its full history and adds pool
+mode, the resource board and cleanup. Both publish the plugin as
+`multi-agent-herdr@claude-code-herdr`, so add only one of the two marketplaces. The original
+replaced the [multi-agent](https://github.com/R0drig0V1/claude-code-multi-agent) plugin; do not
+enable that one in the same project either.
 
 - **One integrator owns `main`.** It verifies each pull request merged onto `main`, merges the
   green ones and bounces the rest with evidence, as an adversarial auditor.
@@ -72,18 +78,18 @@ Requirements: herdr (built against 0.9.5) with Claude Code running inside it (`H
    `.claude/settings.json`):
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/claude-code-herdr/main/install.sh | bash
-   # or, from a local clone:  bash /path/to/claude-code-herdr/install.sh
+   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
+   # or, from a local clone:  bash /path/to/herdr-agent-pool/install.sh
    ```
 
 3. Install the plugin for the project:
 
    ```bash
-   claude plugin marketplace add R0drig0V1/claude-code-herdr      # or /path/to/claude-code-herdr
+   claude plugin marketplace add R0drig0V1/herdr-agent-pool      # or /path/to/herdr-agent-pool
    claude plugin install multi-agent-herdr@claude-code-herdr --scope project
    ```
 
-   To try it without installing: `claude --plugin-dir /path/to/claude-code-herdr/plugin`.
+   To try it without installing: `claude --plugin-dir /path/to/herdr-agent-pool/plugin`.
 4. Inside herdr, run `/multi-agent-herdr:setup` once: it checks herdr, the Claude integration
    and the project, and installs anything only after you confirm.
 

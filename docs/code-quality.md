@@ -1,5 +1,5 @@
 <!--
-Code quality and security checks of claude-code-herdr: what runs in CI and why, the
+Code quality and security checks of herdr-agent-pool: what runs in CI and why, the
 thresholds and how they were measured, how to run each check locally, the repository settings
 that are the owner's decision, and the research comparison of the tools considered
 (as of 2026-11-07).
@@ -99,10 +99,10 @@ added this document. State as read through `gh api` on 2026-11-07:
 |---|---|---|
 | Secret scanning | enabled | done |
 | Push protection | enabled | done |
-| Dependabot alerts | disabled | `gh api -X PUT repos/R0drig0V1/claude-code-herdr/vulnerability-alerts` |
-| Dependabot security updates | disabled | `gh api -X PUT repos/R0drig0V1/claude-code-herdr/automated-security-fixes` (needs alerts) |
-| Private vulnerability reporting (needed by SECURITY.md) | disabled | `gh api -X PUT repos/R0drig0V1/claude-code-herdr/private-vulnerability-reporting`, or Settings → Security and quality → Advanced Security → Private vulnerability reporting → Enable |
-| Require actions pinned to a full SHA | off | `gh api -X PUT repos/R0drig0V1/claude-code-herdr/actions/permissions -F enabled=true -f allowed_actions=all -F sha_pinning_required=true` |
+| Dependabot alerts | disabled | `gh api -X PUT repos/R0drig0V1/herdr-agent-pool/vulnerability-alerts` |
+| Dependabot security updates | disabled | `gh api -X PUT repos/R0drig0V1/herdr-agent-pool/automated-security-fixes` (needs alerts) |
+| Private vulnerability reporting (needed by SECURITY.md) | disabled | `gh api -X PUT repos/R0drig0V1/herdr-agent-pool/private-vulnerability-reporting`, or Settings → Security and quality → Advanced Security → Private vulnerability reporting → Enable |
+| Require actions pinned to a full SHA | off | `gh api -X PUT repos/R0drig0V1/herdr-agent-pool/actions/permissions -F enabled=true -f allowed_actions=all -F sha_pinning_required=true` |
 | CodeQL default setup | not configured | **leave it off**: `codeql.yml` is the advanced setup, and the two conflict |
 
 ## Research: tools considered (2026-11-07)
