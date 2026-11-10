@@ -12,8 +12,11 @@ All notable changes to this project are documented here. The format follows
 - Policy answers approved by the user (docs/multi-integrator.md, "Decisions"):
   - in pool mode, a PR touching `integrators.needs_coordinator_ok` paths waits for the
     coordinator's OK on its exact head. The default paths are migrations, security and
-    privacy paths, `CLAUDE.md` and the dependency manifests. `integrate-pr.sh` exits 12, and
-    `pool-state.py` gains `await-ok`, `approve`, `approved` and `awaiting`;
+    privacy paths, `CLAUDE.md`, `.claude/` (so a PR cannot turn its own gate off), CI
+    workflows, and the dependency manifests and lockfiles. Matching is case-insensitive.
+    `integrate-pr.sh` exits 12, and `pool-state.py` gains `await-ok`, `approve`, `approved`
+    and `awaiting`. The gate fails closed: the PR's files are listed NUL-separated and
+    unquoted, so non-ASCII paths are matched, and a failing `git diff` stops the merge;
   - `integrator-pool.sh revive` respawns members 1..min only when every member has died;
   - `resource-budget.py memory-check`: `dispatch` and `integrator-pool.sh spawn`/`revive`
     refuse to start an agent while memory is below `low_memory_gb`. The user's explicit

@@ -35,9 +35,10 @@ Keys (all optional; a missing file means every default):
   `POOL_MAX`), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30),
   `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`[]`; for example
   `["docs/phases/*.md"]` when no check reads the plan) and `needs_coordinator_ok` (fnmatch
-  patterns of the paths whose PRs wait for the coordinator's OK before they merge:
-  migrations, security and privacy paths, `CLAUDE.md` and the dependency manifests by
-  default; `[]` turns the gate off).
+  patterns, matched case-insensitively, of the paths whose PRs wait for the coordinator's OK
+  before they merge: by default migrations, security and privacy paths, `CLAUDE.md`,
+  `.claude/` (so a PR cannot switch its own gate off), CI workflows and the dependency
+  manifests and lockfiles; `[]` turns the gate off).
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -85,8 +86,10 @@ POOL_DEFAULTS: dict[str, Any] = {
     "reverify_exempt_paths": [],
     "needs_coordinator_ok": [
         "*migrations/*", "*alembic/*", "*security*", "*privacy*", "*CLAUDE.md",
-        "*pyproject.toml", "*uv.lock", "*package.json", "*package-lock.json",
-        "*Cargo.toml", "*Cargo.lock",
+        "*.claude/*", "*.github/workflows/*",
+        "*pyproject.toml", "*uv.lock", "*requirements*.txt", "*package.json",
+        "*package-lock.json", "*yarn.lock", "*pnpm-lock.yaml", "*Cargo.toml", "*Cargo.lock",
+        "*go.mod", "*go.sum",
     ],
 }  # fmt: skip
 PATTERN_LISTS = ("reverify_exempt_paths", "needs_coordinator_ok")

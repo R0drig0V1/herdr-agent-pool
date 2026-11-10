@@ -475,6 +475,11 @@ The policy questions of the first version, with the answers the user approved:
    - `integrate-pr.sh` exits 12 and records the wait (`pool-state.py await-ok`).
    - The queue skips the PR until `pool-state.py approve <N> --head <sha>`.
    - A new push needs a new OK.
+   - The default list also covers `.claude/` (a PR cannot switch its own gate off), CI
+     workflows, and the other lockfiles.
+   - Matching is case-insensitive.
+   - The gate fails closed: non-ASCII paths are listed unquoted (`-z`), and a failing
+     `git diff` stops the merge.
    - The list is configurable; `[]` turns the gate off.
 2. **The coordinator pushes plan commits directly**, under the merge lock. No change.
 3. **No speculative batching** for now. No change.

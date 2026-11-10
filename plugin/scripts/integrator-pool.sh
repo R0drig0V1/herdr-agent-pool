@@ -158,7 +158,10 @@ cmd_spawn() {  # cmd_spawn <n> [--allow-low-memory]
         && die "the herdr name $name is held by an agent outside this repository's verify worktrees" 2
     if [[ "${2:-}" != --allow-low-memory ]]; then
         # An agent started on a machine that is out of memory can take every other one down.
-        memory=$("$dir/resource-budget.py" memory-check) || die "not starting $name: $memory (override: spawn $n --allow-low-memory, only on the user's explicit say-so)" 6
+        local mrc=0
+        memory=$("$dir/resource-budget.py" memory-check 2>&1) || mrc=$?
+        [[ $mrc != 3 ]] || die "not starting $name: $memory (override: spawn $n --allow-low-memory, only on the user's explicit say-so)" 6
+        [[ $mrc == 0 ]] || die "not starting $name: resource-budget.py memory-check failed (exit $mrc): $memory" 1
     fi
     ensure_worktree "$wt"
     out=$(herdr workspace create --cwd "$wt" --label "$name" --no-focus \

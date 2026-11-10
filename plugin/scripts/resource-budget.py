@@ -133,12 +133,16 @@ def record_peak(owner: dict[str, Any], code: int, seconds: float) -> None:
         peak_mb = peak / 1024**2 if platform.system() == "Darwin" else peak / 1024
         entry = {**owner, "exit": code, "seconds": round(seconds, 1), "peak_mb": round(peak_mb)}
         path = os.path.join(state_dir(), "history.jsonl")
-        with open(path, "a") as f:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)  # concurrent runs append and trim one at a time
             f.write(json.dumps(entry) + "\n")
-        with open(path) as f:
+            f.flush()
+            f.seek(0)
             lines = f.readlines()
-        if len(lines) > 2 * HISTORY_KEEP:
-            with open(path, "w") as f:
+            if len(lines) > 2 * HISTORY_KEEP:
+                f.seek(0)
+                f.truncate()
                 f.writelines(lines[-HISTORY_KEEP:])
     except (OSError, ValueError):
         pass

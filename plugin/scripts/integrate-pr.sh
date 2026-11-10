@@ -202,12 +202,24 @@ requeue() {  # requeue <outcome> <exit code> <reason>: reset, back to the queue,
 # (migrations, security, CLAUDE.md, dependency manifests...) merges only once the coordinator
 # approved exactly this head. Until then it waits, out of the queue, with its claim released.
 if [[ "$mode" == pool && "$gate" != "[]" ]]; then
-    gated=$(git diff --no-renames --name-only "origin/$base...$head" | python3 -c 'import fnmatch, json, sys
-pats = json.loads(sys.argv[1])
-print("\n".join(p for p in sys.stdin.read().splitlines() if p and any(fnmatch.fnmatchcase(p, q) for q in pats)))' "$gate")
+    # Fail closed: the paths go through a file, NUL-separated and unquoted (-z, quotePath off),
+    # so non-ASCII names cannot slip past the patterns, and a failing diff stops the merge
+    # instead of producing an empty, ungated list. Patterns match case-insensitively.
+    paths_file="$git_dir/multi-agent-herdr-paths-$N"
+    git -c core.quotePath=false diff --no-renames --name-only -z "origin/$base...$head" > "$paths_file" \
+        || stop "cannot list the files of PR #$N (git diff failed): not merging it unchecked"
+    gated=$(python3 -c 'import fnmatch, json, sys
+pats = [q.lower() for q in json.loads(sys.argv[1])]
+raw = open(sys.argv[2], "rb").read().split(b"\0")
+paths = [p.decode("utf-8", "surrogateescape") for p in raw if p]
+print("\n".join(p for p in paths if any(fnmatch.fnmatchcase(p.lower(), q) for q in pats)))' "$gate" "$paths_file") \
+        || stop "cannot match the files of PR #$N against needs_coordinator_ok: not merging it unchecked"
+    rm -f "$paths_file"
     if [[ -n "$gated" ]] && ! "$ps" approved "$N" --head "$head"; then
-        "$ps" await-ok "$N" --head "$head" --owner "$me" --paths "${gated//$'\n'/ }" >/dev/null \
-            || echo "warning: could not record that PR #$N waits for the OK (pool-state.py await-ok failed)" >&2
+        if ! "$ps" await-ok "$N" --head "$head" --owner "$me" --paths "${gated//$'\n'/ }" >/dev/null; then
+            echo "warning: could not record that PR #$N waits for the OK (pool-state.py await-ok failed)" >&2
+            "$ps" release "$N" --owner "$me" >/dev/null 2>&1   # do not keep it as "mine" in a loop
+        fi
         result needs-coordinator-ok "PR #$N touches ${gated//$'\n'/, }: it waits for the coordinator's OK (pool-state.py approve $N --head $head)"
         exit 12
     fi

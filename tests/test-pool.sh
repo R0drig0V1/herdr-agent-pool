@@ -640,6 +640,31 @@ check "pool-state: approved, the PR is back in the queue" [ "$(cd "$proj" && "$p
 echo '[]' > "$FAKE_GH/list.json"
 integrate 12
 check "integrate-pr: with the OK it merges" bash -c '[[ $1 == 0 ]] && git -C "$2" cat-file -e main:pyproject.toml' _ "$rc" "$origin"
+# The gate fails closed: non-ASCII paths are not quoted past it, case does not matter, and a
+# failing diff stops the merge instead of letting the PR through ungated.
+make_pr 13 feat/accent "é/pyproject.toml" "[project]"
+integrate 13
+check "integrate-pr: a non-ASCII path is still gated (exit 12)" \
+    bash -c '[[ $1 == 12 && "$2" == *"é/pyproject.toml"* ]]' _ "$rc" "$out"
+make_pr 14 feat/upper docs/SECURITY.md "policy"
+integrate 14
+check "integrate-pr: patterns match case-insensitively (exit 12)" \
+    bash -c '[[ $1 == 12 && "$2" == *"docs/SECURITY.md"* ]]' _ "$rc" "$out"
+gitwrap="$work/gitwrap"; mkdir -p "$gitwrap"
+cat > "$gitwrap/git" <<WRAP
+#!/usr/bin/env bash
+# git, except that \`diff ... -z\` (the gate's file list) fails while \$FAKE_DIFF_FAIL is set.
+if [[ -n "\${FAKE_DIFF_FAIL:-}" && " \$* " == *" diff "* && " \$* " == *" -z "* ]]; then
+    echo "fatal: simulated failure" >&2; exit 128
+fi
+exec "$(command -v git)" "\$@"
+WRAP
+chmod +x "$gitwrap/git"
+make_pr 15 feat/plain src/fifteen.txt fifteen
+PATH="$gitwrap:$PATH" FAKE_DIFF_FAIL=1 integrate 15
+check "integrate-pr: a failing diff stops the merge (exit 2), nothing landed" \
+    bash -c '[[ $1 == 2 && "$2" == *"cannot list the files"* ]] && ! git -C "$3" cat-file -e main:src/fifteen.txt' _ "$rc" "$out" "$origin"
+(cd "$proj" && HERDR_ENV=1 HERDR_PANE_ID=w2:p1 "$ps" release 15 --owner "$me" >/dev/null)
 agents "$me" w2:p1 idle "$wt1"
 
 # Single mode: the integrator in the main worktree.
@@ -695,9 +720,11 @@ budget 50 100000
 check "resource-budget: memory-check refuses below low_memory_gb (exit 3)" exits 3 "$rb" memory-check
 budget 50 0
 check "resource-budget: memory-check passes above it" "$rb" memory-check
-"$rb" run --label peak-test -- python3 -c "b = bytearray(60 * 1024 * 1024)" >/dev/null 2>&1
+"$rb" run --label peak-test -- python3 -c "b = bytearray(60 * 1024 * 1024); b[::4096] = b'x' * len(range(0, len(b), 4096))" >/dev/null 2>&1
 check "resource-budget: a heavy command's peak memory is recorded" \
     bash -c 'tail -1 "$1/history.jsonl" | jq -e ".label == \"peak-test\" and .peak_mb >= 50 and .exit == 0" >/dev/null' _ "$MULTI_AGENT_HERDR_RESOURCES_DIR"
+check "resource-budget: the history file is private (0600)" \
+    bash -c '[[ "$(stat -f %Lp "$1/history.jsonl" 2>/dev/null || stat -c %a "$1/history.jsonl")" == 600 ]]' _ "$MULTI_AGENT_HERDR_RESOURCES_DIR"
 check "resource-board: shows the recent heavy commands' peak memory" \
     bash -c '[[ "$("$1" show)" == *"| peak-test | ? | "* ]]' _ "$board"
 budget 4
@@ -764,6 +791,10 @@ check "pool spawn: refused while memory is LOW (exit 6), nothing started" \
 (cd "$proj" && env HERDR_ENV=1 "$pool" spawn 1 --allow-low-memory >/dev/null 2>&1); status=$?
 check "pool spawn: --allow-low-memory is the user's override" \
     bash -c '[[ $1 == 0 ]] && grep -q "agent-start integrator-proj-1" "$2"' _ "$status" "$FAKE_LOG"
+echo '{"heavy_slot": 1}' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
+out=$(cd "$proj" && env HERDR_ENV=1 "$pool" spawn 1 2>&1); status=$?
+check "pool spawn: a broken resources.json is not reported as LOW memory (exit 1)" \
+    bash -c '[[ $1 == 1 && "$2" == *"memory-check failed"* && "$2" != *"memory is LOW"* ]]' _ "$status" "$out"
 budget 50
 : > "$FAKE_LOG"
 (cd "$proj" && env HERDR_ENV=1 "$pool" revive >/dev/null 2>&1); status=$?
