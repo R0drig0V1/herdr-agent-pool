@@ -23,26 +23,40 @@ Commands:
     bounce N --head SHA --owner NAME    record a bounce of head SHA (and release the claim)
     queue --base BRANCH [--owner NAME]  claimable open PRs, oldest first (runs `gh pr list`):
                                         N  headRefName  headRefOid  free|mine|stale  title
-    lock run --owner NAME [--timeout S] [--expect-base SHA --base BRANCH] -- CMD [ARG...]
-                                        run CMD holding the merge lock; with --expect-base,
+    lock run --owner NAME [--timeout S] [--max-seconds S] [--expect-base SHA --base BRANCH]
+             -- CMD [ARG...]            run CMD holding the merge lock (killed after
+                                        --max-seconds, exit 125); with --expect-base,
                                         fetch origin BRANCH first and exit 75 without running
                                         CMD when origin/BRANCH is not SHA any more
     lock status                         exit 0 free; 1 held (prints the owner)
     report add N --sha SHA --owner NAME [--tasks TEXT] | report list | report done N
     report known N                      exit 0 when PR N was reported (pending or done)
+    whoami                              the herdr agent of the calling pane (exit 4: unknown)
     activity NAME | idle-seconds NAME   touch / read a member's last activity
 
 A claim is **stale** when its heartbeat is older than `integrators.claim_ttl_minutes` (default
-60), or when its owner is not a live herdr agent (`herdr agent list`; when herdr cannot be
-asked, only the age counts). A stale claim is moved aside with one atomic `rename` before it is
-claimed again, so two integrators that both find it stale cannot both take it.
+60), or when its owner has been missing from `herdr agent list` for
+`$MULTI_AGENT_HERDR_MISSING_GRACE` seconds (default 180; when herdr cannot be asked, only the
+age counts). Every read-decide-write of the claims (claim, release, heartbeat, bounce, queue)
+holds `claims/.lock` (a kernel flock), so two integrators that both find a claim stale cannot
+both take it, and a release cannot remove a claim that changed hands in between.
 
 The merge lock is a kernel `flock`: the kernel releases it when its holder dies, so a crashed
 integrator never wedges the pool. It only orders pushes; correctness comes from git itself,
 since a push that is not a fast-forward is rejected (the plugin never force-pushes).
 
+In pool mode the commands that change the claims (claim, release, heartbeat, bounce), take the
+merge lock (lock run) or touch plan reports (report add, report done) first check who calls
+(`caller_name`: the pane in $HERDR_PANE_ID, believed only when that pane's shell is an
+ancestor of this process, so a forged id fails): the herdr agent of the calling pane must be a
+pool member (the coordinator may also `lock run`
+and `report done`), `--owner` must be that agent, and when herdr cannot answer the command is
+refused (exit 4). The environment variables that carry the roles are not proof of anything.
+
 Exit codes: 0 ok; 1 usage, I/O or not inside a git repository; 3 held by another owner;
+4 refused: the calling pane's herdr agent may not do this (pool mode);
 75 base moved (`lock run --expect-base`); 124 the lock was not acquired within --timeout;
+125 CMD ran longer than --max-seconds and was killed;
 otherwise CMD's own exit code (`lock run`). Python 3.9 compatible, no dependencies.
 """
 
@@ -54,6 +68,8 @@ import fcntl
 import importlib.util
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -61,9 +77,15 @@ from typing import Any
 
 STATE = "multi-agent-herdr"
 EXIT_HELD = 3
+EXIT_IDENTITY = 4
+HERDR_TIMEOUT = 10  # seconds; a hung herdr must not freeze the pool (claims/.lock is held)
 EXIT_BASE_MOVED = 75
 EXIT_LOCK_TIMEOUT = 124
+EXIT_COMMAND_TIMEOUT = 125
 FRESH_CLAIM_SECONDS = 60  # a claim directory without owner.json yet is being created
+# A live-looking owner missing from `herdr agent list` is only presumed dead after this many
+# seconds (one glitchy listing must not hand its PR to a second integrator).
+MISSING_GRACE = float(os.environ.get("MULTI_AGENT_HERDR_MISSING_GRACE", "180"))
 
 
 def _load_project_config() -> Any:
@@ -83,23 +105,100 @@ def common_dir() -> str:
     return git("rev-parse", "--path-format=absolute", "--git-common-dir")
 
 
-def pool_settings() -> dict[str, Any]:
-    """`integrators` settings of this repository (the pool defaults in single mode)."""
+def project_settings() -> dict[str, Any]:
+    """This repository's settings; `integrators` holds the pool defaults in single mode."""
     pc = _load_project_config()
     config = pc.load(os.path.dirname(common_dir()))
-    return config["integrators"] or dict(pc.POOL_DEFAULTS)
+    config["integrators"] = config["integrators"] or dict(pc.POOL_DEFAULTS)
+    return config  # type: ignore[no-any-return]
+
+
+def herdr_json(*args: str) -> Any:
+    """`herdr <args>` parsed, with a timeout; raises on any failure."""
+    proc = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=HERDR_TIMEOUT)
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.strip() or f"herdr exit {proc.returncode}")
+    return json.loads(proc.stdout)
+
+
+def ancestors() -> set[int]:
+    """PIDs of this process's ancestors (up to the first process above init)."""
+    pids, pid = set(), os.getppid()
+    for _ in range(64):
+        if pid <= 1 or pid in pids:
+            break
+        pids.add(pid)
+        out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True)
+        try:
+            pid = int(out.stdout.strip())
+        except ValueError:
+            break
+    return pids
+
+
+def caller_name() -> str | None:
+    """Herdr agent name of the pane this command really runs in, or None when it cannot be told.
+
+    `$HERDR_PANE_ID` names the pane, but any command can set it (and `herdr pane current
+    --current` both honours it and, without it, falls back to the *focused* pane). So the pane
+    is only believed when its shell (`herdr pane process-info`) is an ancestor of this process:
+    a forged id points at a pane whose shell is not. No id, no answer from herdr, or a pane
+    that is not ours: None (callers refuse).
+    """
+    pane = os.environ.get("HERDR_PANE_ID", "")
+    if os.environ.get("HERDR_ENV") != "1" or not pane:
+        return None
+    try:
+        info = herdr_json("pane", "process-info", "--pane", pane)["result"]["process_info"]
+        shell = int(info["shell_pid"])
+        if info.get("pane_id", pane) != pane or shell <= 1 or shell not in ancestors():
+            return None
+        agents = herdr_json("agent", "list")["result"]["agents"]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return None
+    return next((a.get("name") or None for a in agents if a.get("pane_id") == pane), None)
+
+
+def identity_problem(args: argparse.Namespace, config: dict[str, Any]) -> str | None:
+    """Why the caller may not run this command (pool mode only), or None.
+
+    The roles come from environment variables any session can set, so in pool mode the
+    commands that change the claims, take the merge lock or touch the plan reports also check
+    who the caller *is*: the herdr agent of its pane must be a pool member (the coordinator for
+    `lock run` and `report done` too), and `--owner` must be that agent. When herdr cannot
+    answer, the command is refused (fail closed).
+    """
+    if config["mode"] != "pool":
+        return None
+    pool, coordinator = set(config["integrator_pool"]), config["coordinator_name"]
+    sub = getattr(args, "lock_cmd", None) or getattr(args, "report_cmd", None)
+    allowed = {
+        ("claim", None): pool, ("release", None): pool, ("heartbeat", None): pool,
+        ("bounce", None): pool, ("lock", "run"): pool | {coordinator},
+        ("report", "add"): pool, ("report", "done"): {coordinator},
+    }.get((args.cmd, sub))  # fmt: skip
+    if allowed is None:
+        return None  # read-only commands, and `activity`
+    me = caller_name()
+    if me is None:
+        return "pool mode: cannot tell which herdr agent runs this (outside herdr, or no answer)"
+    if me not in allowed:
+        return (
+            f"pool mode: this pane's herdr agent, {me}, is not one of {', '.join(sorted(allowed))}"
+        )
+    owner = getattr(args, "owner", None)
+    if owner is not None and owner != me:
+        return f"--owner {owner} is not this pane's herdr agent ({me})"
+    return None
 
 
 def live_names() -> set[str] | None:
     """Names of the live herdr agents, or None when herdr cannot be asked."""
     try:
-        proc = subprocess.run(["herdr", "agent", "list"], capture_output=True, text=True)
-        if proc.returncode != 0:
-            return None
-        agents = json.loads(proc.stdout)["result"]["agents"]
+        agents = herdr_json("agent", "list")["result"]["agents"]
         return {a["name"] for a in agents if a.get("name")}
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return None  # unknown: staleness falls back to the heartbeat's age
 
 
 def write_json(path: str, data: dict[str, Any]) -> None:
@@ -131,6 +230,18 @@ class State:
 
     def path(self, *parts: str) -> str:
         return os.path.join(self.root, *parts)
+
+    @contextlib.contextmanager
+    def claims_lock(self) -> Any:
+        """Serialise every read-decide-write of the claims (claim, release, heartbeat, bounce,
+        queue): without it, two integrators that both judge a claim stale could each move the
+        other's fresh claim aside and both own the PR. A kernel flock: freed if we die."""
+        fd = os.open(self.path("claims", ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
 
     def live(self) -> set[str] | None:
         if self._live is False:
@@ -164,7 +275,19 @@ class State:
         if now - float(owner.get("heartbeat", 0)) > self.ttl:
             return True
         live = self.live()
-        return live is not None and owner.get("owner") not in live
+        if live is None:
+            return False
+        if owner.get("owner") in live:
+            if "missing_since" in owner:  # seen again: a later glitch starts a new grace
+                del owner["missing_since"]
+                write_json(os.path.join(self.claim_dir(pr), "owner.json"), owner)
+            return False
+        # Missing from herdr: note when that was first seen (callers hold claims_lock), and
+        # presume the owner dead only once it has stayed missing for MISSING_GRACE seconds.
+        if "missing_since" not in owner:
+            owner["missing_since"] = now
+            write_json(os.path.join(self.claim_dir(pr), "owner.json"), owner)
+        return now - float(owner["missing_since"]) >= MISSING_GRACE
 
     def write_owner(self, pr: int, name: str, head: str) -> None:
         """(Re)write the claim of `pr` by `name`, keeping its `since` when it was ours."""
@@ -175,7 +298,7 @@ class State:
         write_json(os.path.join(self.claim_dir(pr), "owner.json"), data)
         self.touch(name)
 
-    def claim(self, pr: int, name: str, head: str) -> tuple[int, str]:
+    def _claim(self, pr: int, name: str, head: str) -> tuple[int, str]:
         owner = self.owner_of(pr)
         if owner is not None and owner.get("owner") == name:
             self.write_owner(pr, name, head or owner.get("head", ""))
@@ -184,8 +307,9 @@ class State:
             if not self.is_stale(pr, owner):
                 return EXIT_HELD, f"PR #{pr}: claimed by {owner.get('owner', '(being created)')}"
             aside = self.path("claims", f".stale-pr-{pr}-{time.time():.6f}-{os.getpid()}")
-            with contextlib.suppress(OSError):  # another integrator moved it first
+            with contextlib.suppress(OSError):
                 os.rename(self.claim_dir(pr), aside)
+            shutil.rmtree(aside, ignore_errors=True)
         try:
             os.mkdir(self.claim_dir(pr))
         except FileExistsError:
@@ -195,7 +319,7 @@ class State:
         stolen = f" (re-claimed from {owner.get('owner', '?')})" if owner is not None else ""
         return 0, f"PR #{pr}: claimed by {name}{stolen}"
 
-    def release(self, pr: int, name: str) -> tuple[int, str]:
+    def _release(self, pr: int, name: str) -> tuple[int, str]:
         owner = self.owner_of(pr)
         if owner is None:
             return 0, f"PR #{pr}: not claimed"
@@ -209,13 +333,29 @@ class State:
         self.touch(name)
         return 0, f"PR #{pr}: released by {name}"
 
-    def heartbeat(self, pr: int, name: str) -> tuple[int, str]:
+    def _heartbeat(self, pr: int, name: str) -> tuple[int, str]:
         owner = self.owner_of(pr)
         if not owner or owner.get("owner") != name:
             holder = (owner or {}).get("owner", "nobody")
             return EXIT_HELD, f"PR #{pr}: not claimed by {name} (held by {holder})"
         self.write_owner(pr, name, owner.get("head", ""))
         return 0, f"PR #{pr}: heartbeat"
+
+    def claim(self, pr: int, name: str, head: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._claim(pr, name, head)
+
+    def release(self, pr: int, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._release(pr, name)
+
+    def heartbeat(self, pr: int, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._heartbeat(pr, name)
+
+    def bounce(self, pr: int, head: str, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._bounce(pr, head, name)
 
     def claims(self) -> list[tuple[int, dict[str, Any]]]:
         result = []
@@ -227,10 +367,10 @@ class State:
 
     # Bounces and the queue ------------------------------------------------------------------
 
-    def bounce(self, pr: int, head: str, name: str) -> tuple[int, str]:
+    def _bounce(self, pr: int, head: str, name: str) -> tuple[int, str]:
         data = {"pr": pr, "head": head, "owner": name, "at": time.time()}
         write_json(self.path("bounced", f"pr-{pr}.json"), data)
-        self.release(pr, name)
+        self._release(pr, name)
         return 0, f"PR #{pr}: bounced at {head[:12]}"
 
     def bounced_head(self, pr: int) -> str:
@@ -320,12 +460,30 @@ def lock_run(state: State, args: argparse.Namespace) -> int:
                 if now != args.expect_base:
                     print(f"base moved: origin/{args.base} is {now}, expected {args.expect_base}")
                     return EXIT_BASE_MOVED
-            return subprocess.call(command)
+            return run_bounded(command, args.max_seconds)
         finally:
             with contextlib.suppress(OSError):
                 os.remove(state.path("lock", "merge.owner.json"))
     finally:
         os.close(fd)  # releases the flock
+
+
+def run_bounded(command: list[str], max_seconds: float) -> int:
+    """Run `command`; after `max_seconds` kill its whole process group (exit 125).
+
+    A new session (process group) for the command, so a hung `git push` and its helpers die
+    with the script that started them instead of surviving it as orphans.
+    """
+    proc = subprocess.Popen(command, start_new_session=True)
+    try:
+        return proc.wait(timeout=max_seconds or None)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        print(f"pool-state: {command[0]} killed after {max_seconds:g} s under the merge lock",
+              file=sys.stderr)  # fmt: skip
+        return EXIT_COMMAND_TIMEOUT
 
 
 def lock_status(state: State) -> int:
@@ -365,6 +523,7 @@ def parser() -> argparse.ArgumentParser:
     run = lock_sub.add_parser("run")
     run.add_argument("--owner", required=True)
     run.add_argument("--timeout", type=float, default=600)
+    run.add_argument("--max-seconds", type=float, default=0, help="kill CMD after S; 0: never")
     run.add_argument("--expect-base", default="")
     run.add_argument("--base", default="main")
     run.add_argument("command", nargs=argparse.REMAINDER)
@@ -381,6 +540,7 @@ def parser() -> argparse.ArgumentParser:
         report_sub.add_parser(name).add_argument("pr", type=int)
     for name in ("activity", "idle-seconds"):
         sub.add_parser(name).add_argument("name")
+    sub.add_parser("whoami")
     return p
 
 
@@ -393,8 +553,11 @@ def queue(state: State, base: str, name: str) -> int:
     if proc.returncode != 0:
         print(f"pool-state: gh pr list failed: {proc.stderr.strip()}", file=sys.stderr)
         return 1
-    for pr in sorted(json.loads(proc.stdout), key=lambda p: p.get("createdAt", "")):
-        status = state.queue_state(pr, name)
+    rows = []
+    with state.claims_lock():
+        for pr in sorted(json.loads(proc.stdout), key=lambda p: p.get("createdAt", "")):
+            rows.append((pr, state.queue_state(pr, name)))
+    for pr, status in rows:
         if status:
             fields_out = [str(pr["number"]), pr.get("headRefName", ""), pr.get("headRefOid", "")]
             print("\t".join([*fields_out, status, pr.get("title", "")]))
@@ -412,9 +575,11 @@ def run(state: State, args: argparse.Namespace) -> int:
     elif args.cmd == "bounce":
         result = state.bounce(args.pr, args.head, args.owner)
     elif args.cmd == "claims":
-        for pr, owner in state.claims():
+        with state.claims_lock():
+            listing = [(pr, owner, state.is_stale(pr, owner)) for pr, owner in state.claims()]
+        for pr, owner, stale in listing:
             age = time.time() - float(owner.get("heartbeat", 0)) if owner else 0
-            status = "stale" if state.is_stale(pr, owner) else "live"
+            status = "stale" if stale else "live"
             print(f"{pr}\t{owner.get('owner', '?')}\t{owner.get('head', '')}\t{age:.0f}\t{status}")
         return 0
     elif args.cmd == "queue":
@@ -423,6 +588,14 @@ def run(state: State, args: argparse.Namespace) -> int:
         return lock_run(state, args) if args.lock_cmd == "run" else lock_status(state)
     elif args.cmd == "report":
         return report(state, args)
+    elif args.cmd == "whoami":
+        me = caller_name()
+        if me is None:
+            print("pool-state: cannot tell which herdr agent runs this (outside herdr, "
+                  "$HERDR_PANE_ID unset, or not this process's pane)", file=sys.stderr)  # fmt: skip
+            return EXIT_IDENTITY
+        print(me)
+        return 0
     elif args.cmd == "activity":
         state.touch(args.name)
         return 0
@@ -459,14 +632,18 @@ def main() -> int:
     args = parser().parse_args()
     try:
         root = args.state_dir or os.path.join(common_dir(), STATE)
-        settings = pool_settings()
+        config = project_settings()
     except (subprocess.CalledProcessError, OSError) as exc:
         print(f"pool-state: not inside a git repository: {exc}", file=sys.stderr)
         return 1
     except ValueError as exc:  # project_config.ConfigError
         print(f"pool-state: {exc}", file=sys.stderr)
         return 1
-    return run(State(root, int(settings["claim_ttl_minutes"])), args)
+    problem = identity_problem(args, config)
+    if problem:
+        print(f"pool-state: refused: {problem}", file=sys.stderr)
+        return EXIT_IDENTITY
+    return run(State(root, int(config["integrators"]["claim_ttl_minutes"])), args)
 
 
 if __name__ == "__main__":

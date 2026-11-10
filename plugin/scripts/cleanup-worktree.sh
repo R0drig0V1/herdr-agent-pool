@@ -15,15 +15,18 @@
 #
 # Nothing is removed unless every check passes:
 #   1. the branch is not main, the base branch or a protected pattern;
-#   2. GitHub has a merged pull request from this branch into <base>, and the branch's tip is
-#      contained in origin/<base> (fetched first): the work landed and nothing was added
-#      after it, so deleting the branch loses nothing. (Ancestry alone is not enough: a
-#      branch just dispatched, with no commit yet, is also "contained" in the base.)
+#   2. GitHub has a merged pull request into <base> whose head was exactly the branch's tip
+#      (name and commit), and that tip is contained in origin/<base> (fetched first): the
+#      work landed and nothing was added after it, so deleting the branch loses nothing.
+#      (Ancestry alone is not enough: a branch just dispatched, with no commit yet, is also
+#      "contained" in the base; the name alone is not enough either, it may be reused.)
 #   3. the worktree has no uncommitted or untracked (non-ignored) file;
 #   4. every herdr agent in the worktree is idle or done (an agent still working, or blocked
 #      at a dialog, is left alone: try again later);
 #   5. every pane of each workspace to close is inside the worktree (a workspace that also
 #      holds something else is not ours to close).
+# Ignored files in the worktree (.env, build output, installed dependencies) are deleted with
+# it: they are not work, and check 3 does not see them.
 # Then: close those workspaces, `git worktree remove` (never --force), delete the local branch,
 # delete the remote branch only when it still points at the merged tip (with a lease on that
 # commit), and clear the agents' resource-board notes. Detached worktrees (the pool's verify
@@ -56,17 +59,17 @@ sys.exit(0 if any(fnmatch.fnmatchcase(b, p) for p in ["main", c["base_branch"], 
 }
 worktree_of() { git -C "$main" worktree list --porcelain | awk -v ref="branch refs/heads/$1" '
     /^worktree / { path = substr($0, 10) } $0 == ref { print path; exit }'; }
-merged_prs=""
-merged_prs() {  # head branch names of the merged PRs into <base> (cached; needs gh)
-    [[ -n "$merged_prs" ]] || merged_prs=$(gh pr list --base "$base" --state merged --limit 300 \
-        --json headRefName 2>/dev/null | jq -r '.[].headRefName' 2>/dev/null; echo .)
-    printf '%s\n' "$merged_prs"
+merged_prs=""   # "<head branch> <head sha>" of the PRs merged into <base>: load_merged_prs
+load_merged_prs() {  # in the main shell, once (a cache filled inside $(...) would be lost)
+    merged_prs=$(gh pr list --base "$base" --state merged --limit 300 --json headRefName,headRefOid \
+        2>/dev/null | jq -r '.[] | "\(.headRefName) \(.headRefOid)"' 2>/dev/null) \
+        || die "cannot list the merged pull requests (gh): nothing removed" 5
 }
 contained() { git -C "$main" merge-base --is-ancestor "$1" "origin/$base"; }
-merged() {  # merged <branch> <tip>: a merged PR from <branch>, and <tip> is in origin/<base>
-    # A here-string, not a pipe: `grep -q` exits at the first match, and under pipefail the
-    # writer's SIGPIPE would turn a match into a failure, depending on timing.
-    grep -qxF -- "$1" <<<"$(merged_prs)" && contained "$2"
+merged() {  # merged <branch> <tip>: a merged PR whose head was exactly <tip>, and <tip> is in
+    # origin/<base>. Matching the commit, not just the name, keeps a reused branch name safe.
+    # A here-string, not a pipe into `grep -q` (pipefail + SIGPIPE would make it flaky).
+    grep -qxF -- "$1 $2" <<<"$merged_prs" && contained "$2"
 }
 dirty() { [[ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]]; }
 inside() { [[ "$1" == "$2" || "$1" == "$2"/* ]]; }   # inside <path> <worktree>
@@ -74,6 +77,7 @@ inside() { [[ "$1" == "$2" || "$1" == "$2"/* ]]; }   # inside <path> <worktree>
 cmd_list() {
     local path branch tip state agents
     git -C "$main" fetch --quiet origin "$base" 2>/dev/null
+    load_merged_prs
     git -C "$main" worktree list --porcelain | awk '
         /^worktree / { path = substr($0, 10); branch = "" }
         /^branch refs\/heads\// { branch = substr($0, 19) }
@@ -95,6 +99,7 @@ cmd_clean() {
     protected "$B" && die "refusing to clean up the protected branch $B"
     tip=$(git -C "$main" rev-parse -q --verify "refs/heads/$B") || die "no local branch $B" 2
     git -C "$main" fetch --quiet origin "$base" || die "git fetch origin $base failed" 7
+    load_merged_prs
     merged "$B" "$tip" \
         || die "$B (${tip:0:12}) has no merged PR into $base, or commits after it: nothing removed" 3
     wt=$(worktree_of "$B")

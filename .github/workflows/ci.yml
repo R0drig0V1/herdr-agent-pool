@@ -1,4 +1,4 @@
-# CI of claude-code-herdr: manifests, shell syntax, ShellCheck, Python and smoke tests.
+# CI of herdr-agent-pool: manifests, shell syntax, ShellCheck, Python and smoke tests.
 name: CI
 
 on:

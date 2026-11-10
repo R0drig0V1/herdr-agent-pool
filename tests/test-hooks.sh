@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke tests for the plugin's hooks, installer and agents-in-repo.py, run in throwaway git
-# repositories. Part of claude-code-herdr (ported from claude-code-multi-agent 0.1.0).
+# repositories. Part of herdr-agent-pool (ported from claude-code-multi-agent 0.1.0).
 #
 # Usage: tests/test-hooks.sh        (exit code = number of failed cases)
 #
@@ -17,14 +17,14 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
-unset CLAUDE_ROLE
+unset CLAUDE_ROLE HERDR_ENV MULTI_AGENT_HERDR_NAME
 
 # Not under a temporary directory: the Bash guard deliberately allows writes there, so the
 # test repositories must live somewhere it protects.
 work="$root/.test-work"
 case "$root/" in
     /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*|"${TMPDIR:-/nonexistent}"*)
-        work="${XDG_CACHE_HOME:-$HOME/.cache}/claude-code-herdr-test-work" ;;
+        work="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-agent-pool-test-work" ;;
 esac
 rm -rf "$work" && mkdir -p "$work"
 trap 'rm -rf "$work"' EXIT
@@ -178,7 +178,7 @@ expect 2 "settings: invalid file, main worktree guarded" "$g" "$(bash_cmd 'git c
 w="$hooks/guard-main-worktree.sh"
 expect 2 "edit: file in main worktree"                "$w" "$(file_op "$on/a/b/new.md")"
 expect 0 "edit: file in linked worktree"              "$w" "$(file_op "$work/on-x/new.md")"
-expect 0 "edit: file outside git"                     "$w" "$(file_op "/nonexistent-claude-code-herdr-test/loose.md")"
+expect 0 "edit: file outside git"                     "$w" "$(file_op "/nonexistent-herdr-agent-pool-test/loose.md")"
 expect 0 "edit: repo without the plugin"              "$w" "$(file_op "$off/new.md")"
 CLAUDE_ROLE=integrator expect 0 "edit: integrator"    "$w" "$(file_op "$on/new.md")"
 expect 0 "edit: plugin set to false"                  "$w" "$(file_op "$dis/new.md")"
@@ -420,9 +420,11 @@ run_ssi() {  # run_ssi <case> <cwd> [env...]: sets ss_out and ss_calls; fails if
     local case="$1" dir="$2" t0 t1 status; shift 2
     export FAKE_CLAIM_LOG="$work/claim-$case.log"; : > "$FAKE_CLAIM_LOG"
     t0=$(now)
-    ss_out=$(jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}' \
-        | env PATH="$fake:$PATH" CLAUDE_PLUGIN_ROOT="$fake_root" HERDR_ENV=1 CLAUDE_ROLE=integrator \
-              FAKE_CLAIM_CODES=0 FAKE_CLAIM_MSG="" "$@" "$ssi" 2>/dev/null); status=$?
+    # A here-string, not a pipe: the hook exits without reading stdin when the role is unset,
+    # and under pipefail jq's SIGPIPE would then fail the case, depending on timing.
+    ss_out=$(env PATH="$fake:$PATH" CLAUDE_PLUGIN_ROOT="$fake_root" HERDR_ENV=1 CLAUDE_ROLE=integrator \
+              FAKE_CLAIM_CODES=0 FAKE_CLAIM_MSG="" "$@" "$ssi" 2>/dev/null \
+              <<<"$(jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}')"); status=$?
     t1=$(now)
     sleep 0.1   # let a fast worker log its call
     ss_calls=$(wc -l < "$FAKE_CLAIM_LOG" | tr -d ' ')

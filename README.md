@@ -1,16 +1,22 @@
 <!--
-README of claude-code-herdr: what the multi-agent-herdr plugin does, how to install it or
-migrate to it from multi-agent, the coordination rules every agent follows, and where herdr
-command syntax comes from.
+README of herdr-agent-pool: what the multi-agent-herdr plugin does (one integrator, or a
+coordinator plus a pool of parallel integrators), how to install it, the coordination rules
+every agent follows, and where herdr command syntax comes from.
 -->
 
-# claude-code-herdr
+# herdr-agent-pool
 
-A [Claude Code](https://code.claude.com) plugin, **`multi-agent-herdr`**, for running **several
+A [Claude Code](https://code.claude.com) plugin, **`multi-agent-herdr`**, for running **many
 Claude agents in parallel on one repository inside [herdr](https://herdr.dev)** without them
-stepping on each other or on `main`. It replaces the
-[multi-agent](https://github.com/R0drig0V1/claude-code-multi-agent) plugin (same workflow,
-ported and made herdr native); do not enable both in one project.
+stepping on each other or on `main`: a coordinator, a pool of integrators that merge in
+parallel, resources negotiated on one machine, and finished work cleaned up.
+
+It grew out of [claude-code-herdr](https://github.com/R0drig0V1/claude-code-herdr), which keeps
+the original single-integrator plugin. This repository carries its full history and adds pool
+mode, the resource board and cleanup. Both publish the plugin as
+`multi-agent-herdr@claude-code-herdr`, so add only one of the two marketplaces. The original
+replaced the [multi-agent](https://github.com/R0drig0V1/claude-code-multi-agent) plugin; do not
+enable that one in the same project either.
 
 - **One integrator owns `main`.** It verifies each pull request merged onto `main`, merges the
   green ones and bounces the rest with evidence, as an adversarial auditor.
@@ -72,18 +78,18 @@ Requirements: herdr (built against 0.9.5) with Claude Code running inside it (`H
    `.claude/settings.json`):
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/claude-code-herdr/main/install.sh | bash
-   # or, from a local clone:  bash /path/to/claude-code-herdr/install.sh
+   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
+   # or, from a local clone:  bash /path/to/herdr-agent-pool/install.sh
    ```
 
 3. Install the plugin for the project:
 
    ```bash
-   claude plugin marketplace add R0drig0V1/claude-code-herdr      # or /path/to/claude-code-herdr
+   claude plugin marketplace add R0drig0V1/herdr-agent-pool      # or /path/to/herdr-agent-pool
    claude plugin install multi-agent-herdr@claude-code-herdr --scope project
    ```
 
-   To try it without installing: `claude --plugin-dir /path/to/claude-code-herdr/plugin`.
+   To try it without installing: `claude --plugin-dir /path/to/herdr-agent-pool/plugin`.
 4. Inside herdr, run `/multi-agent-herdr:setup` once: it checks herdr, the Claude integration
    and the project, and installs anything only after you confirm.
 
@@ -120,7 +126,7 @@ per-repository default applies):
 | `protected_branches` | `[]` | extra `fnmatch` patterns only the integrator may push; `main` and `base_branch` are always protected |
 | `worktree_prefix` | `<repo>-` | development worktrees are `../<worktree_prefix><name>` |
 | `coordinator_name` | `coordinator-<repo>` (same rule) | pool mode: the coordinator's herdr name (`scripts/coordinator.sh`) |
-| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
+| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
 (`project-config.py base_branch`, `project-config.py integrators.max`) or all of them as JSON
@@ -148,6 +154,19 @@ once. Everything else is negotiated: agents note what they run on the resource b
 (`resource-board.sh note|clear|show|prune`), send `RESOURCE REQUEST`s to the coordinator,
 which answers `GO`, `WAIT` or `YIELD` and declares save mode when memory is low
 ([docs/multi-integrator.md](docs/multi-integrator.md), "Resources").
+
+### What changes in single mode
+
+A project that never sets `integrators` keeps one integrator, but 0.2.0 still changes a few
+things for it:
+
+- `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills run the project's heavy
+  scripts through `resource-budget.py`. They may wait for a free heavy slot, and an invalid
+  `~/.config/multi-agent-herdr/resources.json` makes them fail.
+- `integrate` merges with `integrate-pr.sh`, and after a merge it cleans up the author's
+  worktree with `cleanup-worktree.sh`.
+- An invalid `.claude/multi-agent-herdr.json` now blocks the integrator too (fail closed),
+  except for editing that file.
 
 ### Pool mode
 
@@ -294,6 +313,9 @@ or attaches the TUI.
 - `verify-merge.sh` is only as strong as your `scripts/check.sh`.
 - Pool mode assumes every integrator runs on the same machine (claims and the merge lock live
   in the git common dir), and needs a parallel-safe `scripts/check.sh`.
+- Pool mode trusts environment variables for roles; the guard blocks commands that set them
+  and the role-only scripts for other sessions, and `integrate-pr.sh` checks its herdr
+  pane's name, but a script file of an agent's own is not inspected.
 - The heavy-slot floor only applies to the plugin's own entry points; an agent that runs a
   test suite by hand outside `resource-budget.py run` is not counted, and the board is only
   as accurate as the notes agents write.

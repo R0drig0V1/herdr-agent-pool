@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install the multi-agent-herdr workflow into the git repository of the current directory.
 #
-# Part of claude-code-herdr (ported from claude-code-multi-agent 0.1.0's install.sh; only the
+# Part of herdr-agent-pool (ported from claude-code-multi-agent 0.1.0's install.sh; only the
 # repository, plugin id and next steps differ).
 #
 # Usage (from inside the target repository):
-#   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/claude-code-herdr/main/install.sh | bash
-#   bash /path/to/claude-code-herdr/install.sh [--dry-run] [--force]
+#   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
+#   bash /path/to/herdr-agent-pool/install.sh [--dry-run] [--force]
 #
 # What it does:
 # - Copies the project-owned files of template/ (CLAUDE.md, scripts/check.sh,
@@ -24,7 +24,7 @@
 # Needs git and bash; jq to merge an existing settings.json.
 set -euo pipefail
 
-REPO_URL="https://github.com/R0drig0V1/claude-code-herdr.git"
+REPO_URL="https://github.com/R0drig0V1/herdr-agent-pool.git"
 MARKETPLACE="claude-code-herdr"
 PLUGIN="multi-agent-herdr@${MARKETPLACE}"
 OLD_PLUGIN="multi-agent@claude-code-multi-agent"   # the plugin this one replaces
@@ -144,7 +144,7 @@ Next steps:
   2. Commit these files on main.
   3. Open Claude Code in the repository and trust the folder: it offers to install the
      plugin. Or install it explicitly:
-       claude plugin marketplace add R0drig0V1/claude-code-herdr
+       claude plugin marketplace add R0drig0V1/herdr-agent-pool
        claude plugin install $PLUGIN --scope project
      This plugin replaces multi-agent@claude-code-multi-agent: the installer sets it to false
      in .claude/settings.json (by hand when jq is missing). Uninstall it if you no longer

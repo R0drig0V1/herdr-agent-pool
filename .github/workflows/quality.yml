@@ -1,4 +1,4 @@
-# Code quality and security gates of claude-code-herdr (docs/code-quality.md): ruff and lizard
+# Code quality and security gates of herdr-agent-pool (docs/code-quality.md): ruff and lizard
 # for the Python files, zizmor and actionlint for the workflows, gitleaks for secrets.
 # Every job fails on findings; the thresholds come from the code as it was measured on
 # 2026-11-07, so the first run is green and any regression fails.
@@ -43,10 +43,11 @@ jobs:
         run: uv run --no-sync ruff format --check .
 
       # Ceilings = today's maxima (all from check_segment in plugin/hooks/guard-main-bash.py,
-      # measured 2026-11-09): cyclomatic complexity 47, 59 NLOC, 76 lines, 4 parameters. ruff holds new functions
+      # measured 2026-11-10): cyclomatic complexity 42, 68 lines, 4 parameters; 54 NLOC is
+      # main in plugin/scripts/agents-in-repo.py. ruff holds new functions
       # to complexity 15; this keeps the exempted ones from growing.
       - name: lizard complexity ceilings
-        run: uv run --no-sync lizard --languages python --exclude './.venv/*' -C 47 -T nloc=59 -L 76 -a 4 --warnings_only .
+        run: uv run --no-sync lizard --languages python --exclude './.venv/*' -C 42 -T nloc=54 -L 68 -a 4 --warnings_only .
 
   workflows:
     name: Workflows (zizmor, actionlint)

@@ -34,7 +34,7 @@ Keys (all optional; a missing file means every default):
   in its own verify worktree. Its keys, all optional: `min` (1), `max` (3, at most
   `POOL_MAX`), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30),
   `claim_ttl_minutes` (60), `max_reverify` (3) and `reverify_exempt_paths`
-  (`["docs/phases/*"]`, fnmatch patterns).
+  (`["docs/phases/*.md"]`, fnmatch patterns; `[]` when a check reads the plan).
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -79,7 +79,7 @@ POOL_DEFAULTS: dict[str, Any] = {
     "scale_down_idle_minutes": 30,
     "claim_ttl_minutes": 60,
     "max_reverify": 3,
-    "reverify_exempt_paths": ["docs/phases/*"],
+    "reverify_exempt_paths": ["docs/phases/*.md"],
 }
 DERIVED = ("mode", "integrator_pool")
 

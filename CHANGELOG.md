@@ -1,4 +1,4 @@
-<!-- Release history of claude-code-herdr, in Keep a Changelog format. -->
+<!-- Release history of herdr-agent-pool, in Keep a Changelog format. -->
 
 # Changelog
 
@@ -9,6 +9,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ## [0.2.0] - 2026-11-09
+
+This release moved to its own repository,
+[herdr-agent-pool](https://github.com/R0drig0V1/herdr-agent-pool), which carries the full
+history of [claude-code-herdr](https://github.com/R0drig0V1/claude-code-herdr). That one keeps
+the original single-integrator plugin unchanged. The URLs in the README, `install.sh`,
+`plugin.json`, the template settings and SECURITY.md point here; the marketplace name and the
+plugin id are still `claude-code-herdr` and `multi-agent-herdr@claude-code-herdr`.
 
 ### Added
 - **Pool mode** (opt-in, docs/multi-integrator.md): an `integrators` object in
@@ -75,6 +82,51 @@ All notable changes to this project are documented here. The format follows
   `template/scripts/integrator.sh` and `claim-integrator.sh` document the hook.
 
 ### Changed
+- After review (PR #7):
+  - claims are read, decided and written under a `flock` (`claims/.lock`), so two integrators
+    can no longer both take over one stale claim;
+  - an owner missing from one herdr listing keeps its claim for a grace period
+    (`$MULTI_AGENT_HERDR_MISSING_GRACE`, 180 s);
+  - `integrate-pr.sh`:
+    - re-checks its claim under the merge lock before pushing (exit 10 if it changed hands);
+    - exits 9 when someone else already merged the head;
+    - re-verifies after a non-fast-forward rejection;
+    - releases the claim and resets the worktree on every non-merge exit;
+    - kills a push hung under the lock after 600 s;
+    - compares the exempt paths with `--no-renames`, now defaulting to `docs/phases/*.md`;
+    - checks that its pane's herdr agent is the integrator;
+  - the Bash guard blocks commands that set `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`,
+    `MULTI_AGENT_HERDR_SLOT` or `HERDR_ENV`, and the role-only scripts for sessions without
+    the role;
+  - the guard blocks `--force`, `--delete`, `+` and `:` refspecs on a protected branch even
+    under the merge lock;
+  - an invalid `.claude/multi-agent-herdr.json` fails closed (no role keeps its rights;
+    the file itself may be edited);
+  - `cleanup-worktree.sh` matches a merged PR by its head commit, not only by its name.
+- After the second review (PR #3):
+  - the identity boundary is now herdr itself: in pool mode, `pool-state.py` (claim,
+    release, heartbeat, bounce, lock run, report add/done) and `integrate-pr.sh` require
+    the calling pane's herdr agent to be a pool member (the coordinator may also
+    `lock run` and `report done`), and `--owner` to be that agent; they refuse when herdr
+    cannot answer;
+  - the guard parses `env`/`exec`/`time` options that take arguments (`-u`, `-C`,
+    `-S 'STRING'`, `-a`, `-o`), and resolves `bash script.sh` and `python3 script.py` to
+    the script;
+  - combined short flags (`-uf`, `-fu`, `-ud`) count as force or delete on a protected
+    branch;
+  - `lock run --max-seconds` kills the command's whole process group;
+  - `missing_since` is cleared when the owner is listed again;
+  - `herdr agent list` has a 10 s timeout;
+  - stale claims moved aside are deleted, and `claims/.lock` is mode 0600.
+- After the third review: the caller's identity no longer trusts `$HERDR_PANE_ID` alone.
+  `pool-state.py whoami` believes that pane only when its shell (`herdr pane
+  process-info`) is an ancestor of the caller, and there is no fallback to the focused pane.
+  `integrate-pr.sh` uses it too, and exits 11 when the identity is refused under the lock.
+  The guard also protects `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`,
+  `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH`.
+- Single mode: `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills go through
+  `resource-budget.py` (an invalid `resources.json` fails them), and `integrate` cleans up
+  merged worktrees.
 - `integrate` no longer leaves the author's worktree behind: in single mode it cleans up merged
   branches with `cleanup-worktree.sh`.
 - `integrate` merges with `integrate-pr.sh` in both modes and rebuilds the queue with
