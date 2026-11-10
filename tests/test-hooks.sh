@@ -17,7 +17,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
-unset CLAUDE_ROLE
+unset CLAUDE_ROLE HERDR_ENV MULTI_AGENT_HERDR_NAME
 
 # Not under a temporary directory: the Bash guard deliberately allows writes there, so the
 # test repositories must live somewhere it protects.

@@ -75,6 +75,30 @@ All notable changes to this project are documented here. The format follows
   `template/scripts/integrator.sh` and `claim-integrator.sh` document the hook.
 
 ### Changed
+- After review (PR #7):
+  - claims are read, decided and written under a `flock` (`claims/.lock`), so two integrators
+    can no longer both take over one stale claim;
+  - an owner missing from one herdr listing keeps its claim for a grace period
+    (`$MULTI_AGENT_HERDR_MISSING_GRACE`, 180 s);
+  - `integrate-pr.sh`:
+    - re-checks its claim under the merge lock before pushing (exit 10 if it changed hands);
+    - exits 9 when someone else already merged the head;
+    - re-verifies after a non-fast-forward rejection;
+    - releases the claim and resets the worktree on every non-merge exit;
+    - kills a push hung under the lock after 600 s;
+    - compares the exempt paths with `--no-renames`, now defaulting to `docs/phases/*.md`;
+    - checks that its pane's herdr agent is the integrator;
+  - the Bash guard blocks commands that set `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`,
+    `MULTI_AGENT_HERDR_SLOT` or `HERDR_ENV`, and the role-only scripts for sessions without
+    the role;
+  - the guard blocks `--force`, `--delete`, `+` and `:` refspecs on a protected branch even
+    under the merge lock;
+  - an invalid `.claude/multi-agent-herdr.json` fails closed (no role keeps its rights;
+    the file itself may be edited);
+  - `cleanup-worktree.sh` matches a merged PR by its head commit, not only by its name.
+- Single mode: `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills go through
+  `resource-budget.py` (an invalid `resources.json` fails them), and `integrate` cleans up
+  merged worktrees.
 - `integrate` no longer leaves the author's worktree behind: in single mode it cleans up merged
   branches with `cleanup-worktree.sh`.
 - `integrate` merges with `integrate-pr.sh` in both modes and rebuilds the queue with

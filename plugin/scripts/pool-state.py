@@ -23,8 +23,9 @@ Commands:
     bounce N --head SHA --owner NAME    record a bounce of head SHA (and release the claim)
     queue --base BRANCH [--owner NAME]  claimable open PRs, oldest first (runs `gh pr list`):
                                         N  headRefName  headRefOid  free|mine|stale  title
-    lock run --owner NAME [--timeout S] [--expect-base SHA --base BRANCH] -- CMD [ARG...]
-                                        run CMD holding the merge lock; with --expect-base,
+    lock run --owner NAME [--timeout S] [--max-seconds S] [--expect-base SHA --base BRANCH]
+             -- CMD [ARG...]            run CMD holding the merge lock (killed after
+                                        --max-seconds, exit 125); with --expect-base,
                                         fetch origin BRANCH first and exit 75 without running
                                         CMD when origin/BRANCH is not SHA any more
     lock status                         exit 0 free; 1 held (prints the owner)
@@ -33,9 +34,11 @@ Commands:
     activity NAME | idle-seconds NAME   touch / read a member's last activity
 
 A claim is **stale** when its heartbeat is older than `integrators.claim_ttl_minutes` (default
-60), or when its owner is not a live herdr agent (`herdr agent list`; when herdr cannot be
-asked, only the age counts). A stale claim is moved aside with one atomic `rename` before it is
-claimed again, so two integrators that both find it stale cannot both take it.
+60), or when its owner has been missing from `herdr agent list` for
+`$MULTI_AGENT_HERDR_MISSING_GRACE` seconds (default 180; when herdr cannot be asked, only the
+age counts). Every read-decide-write of the claims (claim, release, heartbeat, bounce, queue)
+holds `claims/.lock` (a kernel flock), so two integrators that both find a claim stale cannot
+both take it, and a release cannot remove a claim that changed hands in between.
 
 The merge lock is a kernel `flock`: the kernel releases it when its holder dies, so a crashed
 integrator never wedges the pool. It only orders pushes; correctness comes from git itself,
@@ -43,6 +46,7 @@ since a push that is not a fast-forward is rejected (the plugin never force-push
 
 Exit codes: 0 ok; 1 usage, I/O or not inside a git repository; 3 held by another owner;
 75 base moved (`lock run --expect-base`); 124 the lock was not acquired within --timeout;
+125 CMD ran longer than --max-seconds and was killed;
 otherwise CMD's own exit code (`lock run`). Python 3.9 compatible, no dependencies.
 """
 
@@ -63,7 +67,11 @@ STATE = "multi-agent-herdr"
 EXIT_HELD = 3
 EXIT_BASE_MOVED = 75
 EXIT_LOCK_TIMEOUT = 124
+EXIT_COMMAND_TIMEOUT = 125
 FRESH_CLAIM_SECONDS = 60  # a claim directory without owner.json yet is being created
+# A live-looking owner missing from `herdr agent list` is only presumed dead after this many
+# seconds (one glitchy listing must not hand its PR to a second integrator).
+MISSING_GRACE = float(os.environ.get("MULTI_AGENT_HERDR_MISSING_GRACE", "180"))
 
 
 def _load_project_config() -> Any:
@@ -132,6 +140,18 @@ class State:
     def path(self, *parts: str) -> str:
         return os.path.join(self.root, *parts)
 
+    @contextlib.contextmanager
+    def claims_lock(self) -> Any:
+        """Serialise every read-decide-write of the claims (claim, release, heartbeat, bounce,
+        queue): without it, two integrators that both judge a claim stale could each move the
+        other's fresh claim aside and both own the PR. A kernel flock: freed if we die."""
+        fd = os.open(self.path("claims", ".lock"), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
     def live(self) -> set[str] | None:
         if self._live is False:
             self._live = live_names()
@@ -164,7 +184,14 @@ class State:
         if now - float(owner.get("heartbeat", 0)) > self.ttl:
             return True
         live = self.live()
-        return live is not None and owner.get("owner") not in live
+        if live is None or owner.get("owner") in live:
+            return False
+        # Missing from herdr: note when that was first seen (callers hold claims_lock), and
+        # presume the owner dead only once it has stayed missing for MISSING_GRACE seconds.
+        if "missing_since" not in owner:
+            owner["missing_since"] = now
+            write_json(os.path.join(self.claim_dir(pr), "owner.json"), owner)
+        return now - float(owner["missing_since"]) >= MISSING_GRACE
 
     def write_owner(self, pr: int, name: str, head: str) -> None:
         """(Re)write the claim of `pr` by `name`, keeping its `since` when it was ours."""
@@ -175,7 +202,7 @@ class State:
         write_json(os.path.join(self.claim_dir(pr), "owner.json"), data)
         self.touch(name)
 
-    def claim(self, pr: int, name: str, head: str) -> tuple[int, str]:
+    def _claim(self, pr: int, name: str, head: str) -> tuple[int, str]:
         owner = self.owner_of(pr)
         if owner is not None and owner.get("owner") == name:
             self.write_owner(pr, name, head or owner.get("head", ""))
@@ -195,7 +222,7 @@ class State:
         stolen = f" (re-claimed from {owner.get('owner', '?')})" if owner is not None else ""
         return 0, f"PR #{pr}: claimed by {name}{stolen}"
 
-    def release(self, pr: int, name: str) -> tuple[int, str]:
+    def _release(self, pr: int, name: str) -> tuple[int, str]:
         owner = self.owner_of(pr)
         if owner is None:
             return 0, f"PR #{pr}: not claimed"
@@ -209,13 +236,29 @@ class State:
         self.touch(name)
         return 0, f"PR #{pr}: released by {name}"
 
-    def heartbeat(self, pr: int, name: str) -> tuple[int, str]:
+    def _heartbeat(self, pr: int, name: str) -> tuple[int, str]:
         owner = self.owner_of(pr)
         if not owner or owner.get("owner") != name:
             holder = (owner or {}).get("owner", "nobody")
             return EXIT_HELD, f"PR #{pr}: not claimed by {name} (held by {holder})"
         self.write_owner(pr, name, owner.get("head", ""))
         return 0, f"PR #{pr}: heartbeat"
+
+    def claim(self, pr: int, name: str, head: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._claim(pr, name, head)
+
+    def release(self, pr: int, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._release(pr, name)
+
+    def heartbeat(self, pr: int, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._heartbeat(pr, name)
+
+    def bounce(self, pr: int, head: str, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._bounce(pr, head, name)
 
     def claims(self) -> list[tuple[int, dict[str, Any]]]:
         result = []
@@ -227,10 +270,10 @@ class State:
 
     # Bounces and the queue ------------------------------------------------------------------
 
-    def bounce(self, pr: int, head: str, name: str) -> tuple[int, str]:
+    def _bounce(self, pr: int, head: str, name: str) -> tuple[int, str]:
         data = {"pr": pr, "head": head, "owner": name, "at": time.time()}
         write_json(self.path("bounced", f"pr-{pr}.json"), data)
-        self.release(pr, name)
+        self._release(pr, name)
         return 0, f"PR #{pr}: bounced at {head[:12]}"
 
     def bounced_head(self, pr: int) -> str:
@@ -320,7 +363,12 @@ def lock_run(state: State, args: argparse.Namespace) -> int:
                 if now != args.expect_base:
                     print(f"base moved: origin/{args.base} is {now}, expected {args.expect_base}")
                     return EXIT_BASE_MOVED
-            return subprocess.call(command)
+            try:  # a hung command (a stuck push) must not hold the lock forever
+                return subprocess.run(command, timeout=args.max_seconds or None).returncode
+            except subprocess.TimeoutExpired:
+                print(f"pool-state: {command[0]} killed after {args.max_seconds:g} s under the "
+                      "merge lock", file=sys.stderr)  # fmt: skip
+                return EXIT_COMMAND_TIMEOUT
         finally:
             with contextlib.suppress(OSError):
                 os.remove(state.path("lock", "merge.owner.json"))
@@ -365,6 +413,7 @@ def parser() -> argparse.ArgumentParser:
     run = lock_sub.add_parser("run")
     run.add_argument("--owner", required=True)
     run.add_argument("--timeout", type=float, default=600)
+    run.add_argument("--max-seconds", type=float, default=0, help="kill CMD after S; 0: never")
     run.add_argument("--expect-base", default="")
     run.add_argument("--base", default="main")
     run.add_argument("command", nargs=argparse.REMAINDER)
@@ -393,8 +442,11 @@ def queue(state: State, base: str, name: str) -> int:
     if proc.returncode != 0:
         print(f"pool-state: gh pr list failed: {proc.stderr.strip()}", file=sys.stderr)
         return 1
-    for pr in sorted(json.loads(proc.stdout), key=lambda p: p.get("createdAt", "")):
-        status = state.queue_state(pr, name)
+    rows = []
+    with state.claims_lock():
+        for pr in sorted(json.loads(proc.stdout), key=lambda p: p.get("createdAt", "")):
+            rows.append((pr, state.queue_state(pr, name)))
+    for pr, status in rows:
         if status:
             fields_out = [str(pr["number"]), pr.get("headRefName", ""), pr.get("headRefOid", "")]
             print("\t".join([*fields_out, status, pr.get("title", "")]))
@@ -412,9 +464,11 @@ def run(state: State, args: argparse.Namespace) -> int:
     elif args.cmd == "bounce":
         result = state.bounce(args.pr, args.head, args.owner)
     elif args.cmd == "claims":
-        for pr, owner in state.claims():
+        with state.claims_lock():
+            listing = [(pr, owner, state.is_stale(pr, owner)) for pr, owner in state.claims()]
+        for pr, owner, stale in listing:
             age = time.time() - float(owner.get("heartbeat", 0)) if owner else 0
-            status = "stale" if state.is_stale(pr, owner) else "live"
+            status = "stale" if stale else "live"
             print(f"{pr}\t{owner.get('owner', '?')}\t{owner.get('head', '')}\t{age:.0f}\t{status}")
         return 0
     elif args.cmd == "queue":

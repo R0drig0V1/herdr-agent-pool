@@ -41,7 +41,8 @@ agent on this computer shares a small number of them, so a full test suite may f
 wrapper or several suites at once. `resource-board.sh show` shows who holds each slot. A
 long wait that blocks something urgent (a bounce to fix) is a
 `RESOURCE REQUEST` to the coordinator in pool mode (or a note to the user in single mode),
-not a reason to bypass the wrapper.
+not a reason to bypass the wrapper. With `--timeout S`, exit 124 means no slot was free in
+time: nothing ran; say so, do not run the suite another way.
 
 `scripts/check.sh` holds the project's lint, type and test commands. If it does not exist or
 still prints the "no checks configured" warning, tell the user once.

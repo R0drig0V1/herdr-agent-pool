@@ -38,14 +38,16 @@ Measured on 2026-11-07 (commit `ad4ec57` plus this change) with ruff 0.17.3 and 
 They let the first run pass and make any regression fail.
 
 - **ruff mccabe `max-complexity = 15`** (C901). Only one function is above it:
-  `check_segment` in `plugin/hooks/guard-main-bash.py` (complexity 22 by ruff's count, down
-  from 35 since its git, push and file-writer branches moved into helpers on 2026-11-09). It has
+  `check_segment` in `plugin/hooks/guard-main-bash.py` (complexity 21 by ruff's count, down
+  from 35 since its git, push, file-writer and redirection branches moved into helpers in
+  November 2026). It has
   a `# noqa: C901` and is the guard's main dispatcher. The next most complex functions,
   `load` in `project-config.py` and `main` in `agents-in-repo.py`, are under 15 by ruff's
   count.
-- **lizard ceilings** (`-C 47 -T nloc=59 -L 76 -a 4`): today's maxima, all from
-  `check_segment` (lizard counts boolean operators, so its CCN of 47 is higher than ruff's 22;
-  lowered from 78 / 91 NLOC / 109 lines with that split).
+- **lizard ceilings** (`-C 42 -T nloc=54 -L 68 -a 4`): today's maxima. The complexity of 42
+  and the 68 lines are `check_segment`'s; lizard counts boolean operators, so its CCN is
+  higher than ruff's 21. The 54 NLOC is `main` in `agents-in-repo.py`. The ceilings were
+  lowered from 78 / 91 NLOC / 109 lines when `check_segment` was split.
   ruff's rule exempts that function, so the ceilings stop it from growing. Adding a branch to
   it fails CI on purpose. Split the function, or raise the ceiling in the same PR with a
   reason, which is then visible in review.
@@ -68,7 +70,7 @@ no dependencies). On a busy machine, prefix with `nice -n 19`.
 ```bash
 uv sync --locked                       # .venv with ruff and lizard
 uv run ruff check . && uv run ruff format --check .
-uv run lizard --languages python --exclude './.venv/*' -C 47 -T nloc=59 -L 76 -a 4 --warnings_only .
+uv run lizard --languages python --exclude './.venv/*' -C 42 -T nloc=54 -L 68 -a 4 --warnings_only .
 uvx --python 3.12 zizmor==1.31.1 .github/workflows   # zizmor needs Python >= 3.11; GH_TOKEN enables online audits
 actionlint
 gitleaks git --redact .

@@ -9,9 +9,12 @@
 #
 # Usage: integrate-pr.sh <PR number> [--union-rows PATH]...
 #
-# Only for CLAUDE_ROLE=integrator. Single mode: run it in the main worktree (on the base
-# branch). Pool mode: run it in your own verify worktree (detached HEAD), holding the PR's
-# claim (pool-state.py claim; the script heartbeats it and releases it when it is done).
+# Only for CLAUDE_ROLE=integrator, and inside herdr only for the session whose herdr agent is
+# the integrator's name (the role and the name come from the environment, so the script checks
+# them against the live pane; the Bash guard also keeps other sessions from running it).
+# Single mode: run it in the main worktree (on the base branch). Pool mode: run it in your own
+# verify worktree (detached HEAD), holding the PR's claim (pool-state.py claim; the script
+# heartbeats it and releases it on every outcome but a lost claim).
 #
 # Steps, each gated on the previous one's exit code:
 #  1. Preconditions: settings, role, worktree, no merge in progress (a crashed run's merge is
@@ -26,10 +29,14 @@
 #  4. Commit the merge, then push it under the merge lock (pool-state.py lock run). Inside the
 #     lock, when origin/<base> moved since the verification started, the PR is merged again
 #     onto the new base; if the new merged tree differs from the verified one only in
-#     `integrators.reverify_exempt_paths` (default docs/phases/*), it is pushed at once,
+#     `integrators.reverify_exempt_paths` (default docs/phases/*.md; compared with
+#     --no-renames, so moving code into an exempt path is a change), it is pushed at once,
 #     otherwise the lock is released and the new tree is verified again, up to
 #     `integrators.max_reverify` times (exit 7 after that). The push is never forced: a
-#     non-fast-forward is rejected by the remote, so only a verified tree can land.
+#     non-fast-forward is rejected by the remote, so only a verified tree can land (a rejected
+#     push is merged again and re-verified). Pool mode: the claim is re-checked under the lock
+#     right before the push (exit 10 if it changed hands), and the locked part is killed after
+#     600 s.
 #  5. Delete the head branch only when the PR's head, the remote branch and the merged head
 #     are the same commit and it is contained in origin/<base> (the delete itself carries a
 #     lease on that commit, so a push that lands meanwhile keeps the branch); else keep it.
@@ -39,9 +46,10 @@
 #
 # The last line printed is `RESULT <outcome> ...`. Exit codes: 0 merged; 1 usage, role or
 # settings; 2 precondition failed (nothing changed); 3 conflict (bounce); 4 verification failed
-# (bounce); 5 commit failed; 6 push failed; 7 the base kept moving (requeue: claim released, no
-# bounce); 8 merge lock not acquired (requeue); 9 nothing to merge (the head is already in the
-# base). Needs git, gh, jq and python3.
+# (bounce); 5 commit failed; 6 push failed or timed out; 7 the base kept moving; 8 merge lock
+# not acquired; 9 nothing to merge (the head is already in the base); 10 the claim changed hands
+# (nothing pushed). On 5-9 the claim is released and the worktree reset: the PR goes back to
+# the queue without a bounce. Needs git, gh, jq, python3 and (inside herdr) herdr.
 set -uo pipefail
 
 here_dir=$(cd "$(dirname "$0")" && pwd)
@@ -50,36 +58,55 @@ ps="$here_dir/pool-state.py"
 
 # Under the merge lock: re-entered through `pool-state.py lock run -- integrate-pr.sh
 # --push-under-lock`, with the state of the outer run in the environment (exported below).
+# Every failure has its own exit code (no `set -e`, which would turn them all into 1).
 if [[ "${1:-}" == --push-under-lock ]]; then
-    set -e
-    git fetch --quiet origin "$IPR_BASE"
-    now=$(git rev-parse "origin/$IPR_BASE")
+    fail() { echo "$2"; exit "$1"; }
+    remerge_onto() {  # remerge_onto <sha>: the PR merged again, uncommitted, onto <sha>
+        printf '%s\n' "$1" > "$IPR_STATE"
+        if [[ "$IPR_MODE" == pool ]]; then git checkout --quiet --detach "$1" || fail 6 "cannot check out $1"
+        else git reset --quiet --hard "$1" || fail 6 "cannot reset to $1"; fi
+        if ! git merge --quiet --no-ff --no-commit "$IPR_HEAD_SHA" >/dev/null 2>&1; then
+            git merge --abort 2>/dev/null
+            fail 3 "the PR no longer merges cleanly onto $1"
+        fi
+    }
+    # The claim may have changed hands while we verified (a stale-claim takeover): re-check it
+    # here, under the lock, right before pushing.
+    if [[ "$IPR_MODE" == pool ]]; then
+        "$IPR_PS" heartbeat "$IPR_N" --owner "$IPR_ME" >/dev/null 2>&1 \
+            || fail 10 "the claim on PR #$IPR_N is no longer $IPR_ME's: nothing pushed"
+    fi
+    git fetch --quiet origin "$IPR_BASE" || fail 6 "git fetch origin $IPR_BASE failed"
+    now=$(git rev-parse "origin/$IPR_BASE") || fail 6 "no origin/$IPR_BASE"
+    git merge-base --is-ancestor "$IPR_HEAD_SHA" "$now" \
+        && fail 9 "the PR head is already in origin/$IPR_BASE ($now): merged by someone else"
     if [[ "$now" != "$IPR_BASE_SHA" ]]; then
         echo "origin/$IPR_BASE moved during the verification: $IPR_BASE_SHA -> $now"
-        printf '%s\n' "$now" > "$IPR_STATE"
-        if [[ "$IPR_MODE" == pool ]]; then git checkout --quiet --detach "$now"
-        else git reset --quiet --hard "$now"; fi
-        if ! git merge --quiet --no-ff --no-commit "$IPR_HEAD_SHA" >/dev/null 2>&1; then
-            git merge --abort 2>/dev/null || true
-            echo "the PR no longer merges cleanly onto $now"
-            exit 3
-        fi
-        tree=$(git write-tree)
-        changed=$(git diff --name-only "$IPR_VERIFIED_TREE" "$tree")
+        remerge_onto "$now"
+        tree=$(git write-tree) || fail 6 "git write-tree failed"
+        # --no-renames: a file moved from src/ into an exempt path must count as a change in src/.
+        changed=$(git diff --no-renames --name-only "$IPR_VERIFIED_TREE" "$tree")
         if ! python3 -c 'import fnmatch, json, sys
 pats = json.loads(sys.argv[1])
 paths = [p for p in sys.stdin.read().splitlines() if p]
 sys.exit(0 if all(any(fnmatch.fnmatchcase(p, q) for q in pats) for p in paths) else 1)' \
             "$IPR_EXEMPT" <<<"$changed"; then
             echo "the new base changes the verified tree outside the exempt paths:"
-            head -n 20 <<<"$changed" | sed 's/^/  /'   # no early-exiting reader: set -e + pipefail
+            head -n 20 <<<"$changed" | sed 's/^/  /'
             exit 75
         fi
         echo "only exempt paths changed since the verification (${changed//$'\n'/, }); no re-verify"
-        git commit --quiet -F "$IPR_MSG"
+        git commit --quiet -F "$IPR_MSG" || fail 5 "git commit of the re-merge failed"
     fi
-    git push --quiet origin "HEAD:refs/heads/$IPR_BASE" || exit 6
-    exit 0
+    out=$(git push --porcelain origin "HEAD:refs/heads/$IPR_BASE" 2>&1) && exit 0
+    if grep -qE 'non-fast-forward|fetch first|\[rejected\]' <<<"$out"; then
+        # Someone pushed without the lock: merge again onto what is there and verify again.
+        git fetch --quiet origin "$IPR_BASE" || fail 6 "git fetch origin $IPR_BASE failed"
+        echo "the push was rejected as a non-fast-forward: re-verifying on the new origin/$IPR_BASE"
+        remerge_onto "$(git rev-parse "origin/$IPR_BASE")"
+        exit 75
+    fi
+    fail 6 "git push failed: $out"
 fi
 
 usage() { echo "usage: integrate-pr.sh <PR number> [--union-rows PATH]..." >&2; exit 1; }
@@ -98,11 +125,19 @@ config=$("$pc") || exit 1
 mode=$(jq -r .mode <<<"$config")
 base=$(jq -r .base_branch <<<"$config")
 max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
-exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*"]' <<<"$config")
+exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
 if [[ "$mode" == pool ]]; then me="${MULTI_AGENT_HERDR_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
 [[ -n "$me" ]] || { echo "pool mode: MULTI_AGENT_HERDR_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
 stop() { echo "STOP: $*" >&2; result precondition "$*"; exit 2; }
+# The role and the name come from the environment, so check them against herdr: the agent in
+# this pane must be named $me (a session cannot pose as a pool member by setting variables).
+if [[ "$mode" == pool || "${HERDR_ENV:-}" == 1 ]]; then
+    [[ "${HERDR_ENV:-}" == 1 ]] || stop "pool mode: run it inside herdr, as a pool member"
+    pane=$(herdr pane current --current 2>/dev/null | jq -r '.result.pane.pane_id // empty')
+    agent=$(herdr agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .name // empty')
+    [[ -n "$agent" && "$agent" == "$me" ]] || stop "this pane's herdr agent is '${agent:-none}', not $me"
+fi
 top=$(git rev-parse --show-toplevel) || stop "not inside a git repository"
 cd "$top" || exit 2
 git_dir=$(git rev-parse --absolute-git-dir); common=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -138,16 +173,17 @@ finish_bounce() {  # finish_bounce <outcome> <exit code> <reason>: reset, record
     "${verify[@]}" --reset-only >/dev/null 2>&1 || true
     if [[ "$mode" == pool ]]; then git checkout --quiet --detach "origin/$base"
     else git reset --quiet --hard "origin/$base"; fi
-    "$ps" bounce "$N" --head "$head" --owner "$me" >/dev/null   # the queue skips this head
+    "$ps" bounce "$N" --head "$head" --owner "$me" >/dev/null \
+        || echo "warning: could not record the bounce of PR #$N (pool-state.py bounce failed)" >&2
     result "$1" "PR #$N" "$3"; exit "$2"
 }
-requeue() {  # requeue <outcome> <exit code> <reason>: back to the queue, no bounce
+requeue() {  # requeue <outcome> <exit code> <reason>: reset, back to the queue, no bounce
     git merge --abort >/dev/null 2>&1 || true
-    if [[ "$mode" == pool ]]; then
-        git checkout --quiet --detach "origin/$base"
-        "$ps" release "$N" --owner "$me" >/dev/null
-    else
-        git reset --quiet --hard "origin/$base"
+    if [[ "$mode" == pool ]]; then git checkout --quiet --detach "origin/$base"
+    else git reset --quiet --hard "origin/$base"; fi
+    if [[ "$mode" == pool && "${4:-}" != keep-claim ]]; then
+        "$ps" release "$N" --owner "$me" >/dev/null \
+            || echo "warning: could not release the claim on PR #$N (pool-state.py release failed)" >&2
     fi
     result "$1" "PR #$N" "$3"; exit "$2"
 }
@@ -161,8 +197,7 @@ else
 fi
 base_sha=$(git rev-parse HEAD)
 if git merge-base --is-ancestor "$head" "$base_sha"; then
-    [[ "$mode" == pool ]] && "$ps" release "$N" --owner "$me" >/dev/null
-    result nothing-to-merge "PR #$N: ${head:0:12} is already in origin/$base"; exit 9
+    requeue nothing-to-merge 9 "${head:0:12} is already in origin/$base"
 fi
 if ! git merge --quiet --no-ff --no-commit "$head" >/dev/null 2>&1; then
     while IFS= read -r f; do
@@ -211,21 +246,26 @@ run_verify || finish_bounce verify-failed 4 "verify-merge.sh failed on the merge
 msg="$git_dir/multi-agent-herdr-merge-msg-$N"
 printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg"
 export IPR_BASE="$base" IPR_MODE="$mode" IPR_HEAD_SHA="$head" IPR_EXEMPT="$exempt" IPR_MSG="$msg"
+export IPR_PS="$ps" IPR_N="$N" IPR_ME="$me"
 export IPR_STATE="$git_dir/multi-agent-herdr-newbase-$N"
 
 # 4. Commit, then push under the merge lock; re-verify when the base moved under us.
 attempt=0
 while :; do
     export IPR_BASE_SHA="$base_sha" IPR_VERIFIED_TREE; IPR_VERIFIED_TREE=$(git write-tree)
-    git commit --quiet -F "$msg" || { result commit-failed "PR #$N"; exit 5; }
-    "$ps" lock run --owner "$me" --timeout 900 -- "$0" --push-under-lock; rc=$?
+    git commit --quiet -F "$msg" || requeue commit-failed 5 "git commit of the merge failed"
+    # --max-seconds: a hung fetch or push must not hold the merge lock for everyone.
+    "$ps" lock run --owner "$me" --timeout 900 --max-seconds 600 -- "$0" --push-under-lock; rc=$?
     case $rc in
         0) break ;;
         3) finish_bounce conflict 3 "conflicts with the new origin/$base ($(cat "$IPR_STATE"))" ;;
-        6) result push-failed "PR #$N: git push origin HEAD:$base failed; the merge commit is local only"; exit 6 ;;
-        124) requeue lock-timeout 8 "merge lock not acquired in 900 s" ;;
+        9) requeue nothing-to-merge 9 "the head is already in origin/$base: merged by someone else" ;;
+        10) requeue claim-lost 10 "the claim changed hands during the verification; nothing pushed" keep-claim ;;
         75) ;;
-        *) result push-failed "PR #$N: the push under the lock failed (exit $rc)"; exit 6 ;;
+        124) requeue lock-timeout 8 "merge lock not acquired in 900 s" ;;
+        125) requeue push-failed 6 "the push under the merge lock ran longer than 600 s and was killed" ;;
+        5) requeue commit-failed 5 "git commit of the re-merge failed" ;;
+        *) requeue push-failed 6 "the push under the merge lock failed (exit $rc); nothing landed" ;;
     esac
     attempt=$((attempt + 1))
     base_sha=$(cat "$IPR_STATE")

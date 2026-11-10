@@ -19,7 +19,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 scripts="$root/plugin/scripts"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
-unset CLAUDE_ROLE MULTI_AGENT_HERDR_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK
+unset CLAUDE_ROLE MULTI_AGENT_HERDR_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK HERDR_ENV MULTI_AGENT_HERDR_SLOT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # Not under a temporary directory: the Bash guard allows writes there on purpose. Each run
@@ -107,6 +107,7 @@ agents
 : > "$FAKE_LOG"
 # The resource budget's state and limits, private to the tests (never ~/.cache or ~/.config).
 export MULTI_AGENT_HERDR_RESOURCES_DIR="$work/resources" MULTI_AGENT_HERDR_RESOURCES_CONFIG="$work/resources.json"
+export MULTI_AGENT_HERDR_MISSING_GRACE=0   # an owner missing from herdr is dead at once (one test sets a grace)
 budget() { printf '{"heavy_slots": 1, "sessions_guideline": %s, "low_memory_gb": 0}\n' "$1" > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"; }
 budget 50
 
@@ -213,6 +214,33 @@ CLAUDE_ROLE=coordinator expect 2 "single guard: a coordinator is just a session"
 CLAUDE_ROLE=coordinator expect 2 "single edit guard: a coordinator is just a session" "$w" "$(file_op "$single/x.md")"
 CLAUDE_ROLE=integrator  expect 0 "single guard: the integrator may do everything" "$g" "$(bash_cmd 'git push origin HEAD:main && gh pr merge 3' "$single")"
 CLAUDE_ROLE=integrator  expect 0 "single edit guard: the integrator edits"     "$w" "$(file_op "$single/x.md")"
+expect 2 "guard: posing as an integrator with a prefix" "$g" "$(bash_cmd "CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1 $ipr 12" "$d1")"
+expect 2 "guard: setting the member name through env"   "$g" "$(bash_cmd 'env MULTI_AGENT_HERDR_NAME=integrator-proj-1 ls' "$d1")"
+expect 2 "guard: export CLAUDE_ROLE"                    "$g" "$(bash_cmd 'export CLAUDE_ROLE=coordinator' "$d1")"
+expect 2 "guard: skipping the heavy-slot floor"         "$g" "$(bash_cmd 'MULTI_AGENT_HERDR_SLOT=1 scripts/check.sh' "$d1")"
+expect 0 "guard: other variables are fine"              "$g" "$(bash_cmd 'FOO=1 env BAR=2 ls' "$d1")"
+expect 2 "guard: a developer runs integrate-pr.sh"      "$g" "$(bash_cmd "$ipr 12" "$d1")"
+expect 2 "guard: a developer claims a PR"               "$g" "$(bash_cmd "$ps claim 12 --owner integrator-proj-1" "$d1")"
+expect 0 "guard: a developer reads the queue"           "$g" "$(bash_cmd "$ps queue --base main" "$d1")"
+expect 2 "guard: a developer cleans up a branch"        "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh feat/x" "$d1")"
+expect 0 "guard: a developer lists the cleanup state"   "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh --list" "$d1")"
+CLAUDE_ROLE=integrator  expect 0 "guard: a pool integrator runs integrate-pr.sh" "$g" "$(bash_cmd "$ipr 12" "$wt1")"
+CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator spawns members"      "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$wt1")"
+CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator spawns members"        "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$proj")"
+CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator cleans up"             "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh feat/x" "$proj")"
+for push in "git push --force origin HEAD:main" "git push origin +HEAD:main" "git push origin --delete main" \
+            "git push origin :main" "git push --force-with-lease origin HEAD:main"; do
+    CLAUDE_ROLE=integrator expect 2 "guard: under the lock, no '$push'" "$g" "$(bash_cmd "$ps lock run --owner i -- $push" "$wt1")"
+done
+badpool="$work/badpool"; git init --quiet -b main "$badpool"; mkdir -p "$badpool/.claude"
+cp "$root/template/.claude/settings.json" "$badpool/.claude/settings.json"
+printf '{"integrators": {"max": 2}, "typo": 1}\n' > "$badpool/.claude/multi-agent-herdr.json"
+git -C "$badpool" add -A && git -C "$badpool" commit --quiet -m init
+CLAUDE_ROLE=integrator  expect 2 "fail closed: invalid settings, no single-mode rights" "$g" "$(bash_cmd 'git commit -m x' "$badpool")"
+CLAUDE_ROLE=integrator  expect 2 "fail closed: invalid settings, no push to main"     "$g" "$(bash_cmd 'git push origin HEAD:main' "$badpool")"
+CLAUDE_ROLE=integrator  expect 2 "fail closed: invalid settings, edits blocked"       "$w" "$(file_op "$badpool/README.md")"
+CLAUDE_ROLE=integrator  expect 0 "fail closed: the settings file itself may be fixed" "$w" "$(file_op "$badpool/.claude/multi-agent-herdr.json")"
+CLAUDE_ROLE=coordinator expect 2 "fail closed: the coordinator too"                   "$w" "$(file_op "$badpool/README.md")"
 
 # claim-integrator.sh and the SessionStart hook for the new roles -------------------------------
 claim="$scripts/claim-integrator.sh"
@@ -283,6 +311,26 @@ owner_file="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/
 jq '.heartbeat = 0' "$owner_file" > "$owner_file.new" && mv "$owner_file.new" "$owner_file"
 check "pool-state: an expired heartbeat is re-claimed" psi claim 42 --owner o2
 check "pool-state: release by its owner"   psi release 42 --owner o2
+# One glitchy herdr listing does not hand a live claim over: the owner must stay missing.
+agents o1 w1:p9 idle "$proj"
+psi claim 43 --owner o1 >/dev/null
+agents o2 w2:p9 idle "$proj"   # o1 is missing from this listing
+check "pool-state: an owner missing once keeps its claim (grace)" \
+    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && "$2" claim 43 --owner o2' _ "$proj" "$ps"
+sleep 1.2
+check "pool-state: an owner missing past the grace loses it" \
+    env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && "$2" claim 43 --owner o2 >/dev/null' _ "$proj" "$ps"
+# Eight integrators race for one stale claim: exactly one takes it (claims/.lock).
+agents "${live[@]}"
+psi claim 44 --owner ghost >/dev/null
+f44="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-44/owner.json"
+jq '.heartbeat = 0' "$f44" > "$f44.new" && mv "$f44.new" "$f44"
+for i in 1 2 3 4 5 6 7 8; do
+    ( psi claim 44 --owner "o$i" >/dev/null 2>&1; echo $? > "$work/stale-race.$i" ) &
+done
+wait
+check "pool-state: 8 racing takeovers of a stale claim, exactly one wins" \
+    [ "$(grep -lx 0 "$work"/stale-race.* | wc -l | tr -d ' ')" == 1 ]
 check "pool-state: release of an unclaimed PR" psi release 42 --owner o2
 
 printf '[{"number": 7, "title": "seven", "headRefName": "feat/s", "headRefOid": "aaa", "isDraft": false, "createdAt": "2026-01-02"},
@@ -357,7 +405,8 @@ integrate() {  # integrate <N> [args...]: claim as $me and run integrate-pr.sh; 
     local n="$1"; shift
     (cd "$proj" && "$ps" claim "$n" --owner "$me" >/dev/null)
     export CHECK_COUNT="$work/count-$n"; : > "$CHECK_COUNT"
-    out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" "$ipr" "$n" "$@" 2>&1); rc=$?
+    out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 \
+        "$ipr" "$n" "$@" 2>&1); rc=$?
     unset CHECK_COUNT CHECK_HOOK
 }
 runs() { wc -l < "$work/count-$1" | tr -d ' '; }
@@ -368,7 +417,7 @@ integrate 1
 check "integrate-pr: merges a green PR (exit 0)" bash -c '[[ $1 == 0 && "$2" == *"RESULT merged"*"deleted"* ]]' _ "$rc" "$out"
 check "integrate-pr: the PR's file is on origin/main" on_main src/one.txt
 check "integrate-pr: the head branch is deleted"      not remote_branch feat/one
-check "integrate-pr: the claim is released"           [ -z "$(cd "$proj" && "$ps" claims)" ]
+check "integrate-pr: the claim is released"           [ -z "$(cd "$proj" && "$ps" claims | awk -F'\t' '$1 == 1')" ]
 check "integrate-pr: a plan report waits for the coordinator" \
     [ "$(psi report list | cut -f1,4 | tr '\t' ' ')" == "1 - task 1" ]
 check "integrate-pr: one verification" [ "$(runs 1)" == 1 ]
@@ -430,12 +479,42 @@ check "integrate-pr: base moved by code: verified again, then merged" \
 check "integrate-pr: main has both changes" bash -c 'on() { git -C "$1" cat-file -e "main:$2"; }; on "$1" src/other.txt && on "$1" src/seven.txt' _ "$origin"
 
 make_pr 10 feat/ten src/ten.txt ten
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" "$ipr" 10 2>&1); rc=$?
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a PR it did not claim (exit 2)" bash -c '[[ $1 == 2 && "$2" == *"not claimed"* ]]' _ "$rc" "$out"
-out=$(cd "$proj" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" "$ipr" 10 2>&1); rc=$?
+out=$(cd "$proj" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses the main worktree in pool mode (exit 2)" [ "$rc" == 2 ]
 out=$(cd "$wt1" && env CLAUDE_ROLE=coordinator "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses the coordinator (exit 1)" [ "$rc" == 1 ]
+(cd "$proj" && "$ps" claim 10 --owner "$me" >/dev/null)
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w9:p9 "$ipr" 10 2>&1); rc=$?
+check "integrate-pr: refuses a pane whose herdr agent is not \$me (exit 2)" \
+    bash -c '[[ $1 == 2 && "$2" == *"herdr agent is"* ]]' _ "$rc" "$out"
+# The claim changes hands while the PR is verified: nothing is pushed.
+cat > "$work/hook-steal.sh" <<HOOK
+#!/usr/bin/env bash
+f="\$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10/owner.json"
+jq '.owner = "integrator-proj-2"' "\$f" > "\$f.new" && mv "\$f.new" "\$f"
+HOOK
+chmod +x "$work/hook-steal.sh"; export CHECK_HOOK="$work/hook-steal.sh"
+before=$(git -C "$origin" rev-parse main)
+integrate 10
+check "integrate-pr: a claim lost during the verification stops the push (exit 10)" \
+    bash -c '[[ $1 == 10 && "$2" == *"claim-lost"* && "$(git -C "$3" rev-parse main)" == "$4" ]]' _ "$rc" "$out" "$origin" "$before"
+check "integrate-pr: a lost claim stays with its new owner" \
+    [ "$(cd "$proj" && "$ps" claims | awk -F'\t' '$1 == 10 { print $2 }')" == integrator-proj-2 ]
+(cd "$proj" && "$ps" release 10 --owner integrator-proj-2 >/dev/null)
+# Code renamed into an exempt path on main: --no-renames sees the source change, so re-verify.
+make_pr 11 feat/eleven src/eleven.txt eleven
+cat > "$work/hook-rename.sh" <<HOOK
+#!/usr/bin/env bash
+git -C "$pusher" fetch --quiet origin && git -C "$pusher" checkout --quiet -B main origin/main
+git -C "$pusher" mv src/one.txt docs/phases/one.md && git -C "$pusher" commit --quiet -m "move one"
+git -C "$pusher" push --quiet origin main
+HOOK
+chmod +x "$work/hook-rename.sh"; export CHECK_HOOK="$work/hook-rename.sh"
+integrate 11
+check "integrate-pr: code moved into an exempt path still re-verifies" \
+    bash -c '[[ $1 == 0 && "$2" == *"re-verifying"* && $3 == 2 ]]' _ "$rc" "$out" "$(runs 11)"
 
 # Single mode: the integrator in the main worktree.
 sorigin="$work/single-origin.git"; git init --quiet --bare -b main "$sorigin"
@@ -455,7 +534,8 @@ order="$work/heavy-order"; : > "$order"
 for i in 1 2; do
     "$rb" run --label "t$i" -- sh -c "echo start >> '$order'; sleep 0.6; echo end >> '$order'" 2>/dev/null &
 done
-sleep 0.3; holder=$("$board" show | grep "slot 0")
+holder=""
+for _ in $(seq 1 50); do holder=$("$board" show | grep "slot 0: t") && break; sleep 0.1; done
 wait
 check "resource-budget: one heavy slot serialises two checks" [ "$(tr '\n' ' ' < "$order")" == "start end start end " ]
 check "resource-board: shows the heavy slot's holder" bash -c '[[ "$1" == *"slot 0: t"* ]]' _ "$holder"
@@ -574,7 +654,8 @@ git -C "$proj" fetch --quiet origin
 git -C "$proj" branch --quiet feat/done origin/feat/done
 git -C "$proj" worktree add --quiet "$work/proj-done" feat/done
 done_wt="$work/proj-done"
-echo '[{"number": 30, "headRefName": "feat/done", "state": "MERGED"}]' > "$FAKE_GH/list.json"   # GitHub: PR #30 merged
+jq -n --arg h "$(git -C "$proj" rev-parse feat/done)" \
+    '[{number: 30, headRefName: "feat/done", headRefOid: $h, state: "MERGED"}]' > "$FAKE_GH/list.json"   # GitHub: PR #30 merged
 export FAKE_PANES="$work/panes.json"
 panes() {  # panes <workspace> <pane> <cwd> ...: the fake `herdr pane list`
     local json='[]'
@@ -609,6 +690,10 @@ check "cleanup: closes the workspace, removes the worktree and both branches" \
              && ! git -C "$5" rev-parse -q --verify refs/heads/feat/done >/dev/null' _ "$status" "$FAKE_LOG" "$done_wt" "$proj" "$origin"
 check "cleanup: clears the agent's resource-board note" not test -e "$MULTI_AGENT_HERDR_RESOURCES_DIR/board/donea.json"
 check "cleanup: refuses a branch without a merged PR, even one with no commits yet (exit 3)" exits 3 cwi feat/dev1
+# A branch name reused after its PR merged: the merged PR's head is not this tip.
+jq '.[0].headRefName = "feat/dev2" | .[0].headRefOid = "0000000000000000000000000000000000000000"' "$FAKE_GH/list.json" > "$FAKE_GH/list.new" \
+    && mv "$FAKE_GH/list.new" "$FAKE_GH/list.json"
+check "cleanup: a reused branch name is not 'merged' (exit 3)" exits 3 cwi feat/dev2
 check "cleanup: refuses a protected branch (exit 1)" exits 1 cwi main
 check "cleanup: refuses a Claude session that is not the dispatcher (exit 1)" \
     exits 1 env CLAUDECODE=1 CLAUDE_ROLE= bash -c 'cd "$1" && "$2" --list' _ "$proj" "$cw"

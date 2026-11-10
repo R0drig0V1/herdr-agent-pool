@@ -37,7 +37,7 @@ Settings (`.claude/multi-agent-herdr.json`, read only by `project-config.py`):
     "scale_down_idle_minutes": 30,
     "claim_ttl_minutes": 60,
     "max_reverify": 3,
-    "reverify_exempt_paths": ["docs/phases/*"]
+    "reverify_exempt_paths": ["docs/phases/*.md"]
   }
 }
 ```
@@ -110,12 +110,22 @@ of them and by nobody else.
   written to a temporary file and renamed in place.
 - **Heartbeat**: `integrate-pr.sh` refreshes it at the start and every 2 minutes during a
   verification.
-- **Stale** = the heartbeat is older than `claim_ttl_minutes`, or the owner is not a live
-  herdr agent (`herdr agent list`; when herdr cannot be asked, only the age counts). A claim
-  directory without `owner.json` is "being created" for 60 s, then stale.
-- **Re-claim** of a stale claim: `rename` the directory aside (atomic; when two integrators
-  race, only one rename succeeds and the other one's `mkdir` then fails), then `mkdir` again.
-- **Release** = rename aside and delete. Only the owner can release.
+- **Stale** = the heartbeat is older than `claim_ttl_minutes`, or the owner has been missing
+  from `herdr agent list` for a grace period (`$MULTI_AGENT_HERDR_MISSING_GRACE`, 180 s by
+  default). The first listing that misses the owner only records `missing_since`, so one
+  glitchy listing cannot hand a live claim over. When herdr cannot be asked, only the age
+  counts. A claim directory without `owner.json` is "being created" for 60 s, then stale.
+- **The claims lock.** Every read-decide-write of the claims holds `claims/.lock`, a kernel
+  `flock`: claim, release, heartbeat, bounce, and the queue's staleness checks. Without it,
+  two integrators that both judged a claim stale could each move the other's fresh claim
+  aside, and both would own the PR. (Found in review; covered by a test where eight
+  integrators race for one stale claim.)
+- **Re-claim** of a stale claim: under the lock, `rename` the directory aside, then `mkdir`
+  it again.
+- **Release** = rename aside and delete, under the lock. Only the owner can release.
+- **Re-checked before the push.** `integrate-pr.sh` heartbeats its claim again under the
+  merge lock, right before pushing. If the claim changed hands meanwhile, it pushes nothing
+  (exit 10).
 - **Bounce record**: `bounced/pr-<N>.json` keeps the bounced head SHA. `queue` skips the PR
   until its head changes (the author pushed a fix), so a bounced PR is not re-verified in a
   loop by the next free integrator.
@@ -145,7 +155,7 @@ and a clear "base moved" signal, and keeps two integrators from re-merging at th
 2. Otherwise merge the PR head again onto the new `origin/<base>`. A conflict now is a
    bounce (the author rebases).
 3. Compare the new merged tree with the verified one (`git diff --name-only`). When every
-   difference matches `reverify_exempt_paths` (default `docs/phases/*`: the coordinator's
+   difference matches `reverify_exempt_paths` (default `docs/phases/*.md`, compared with `--no-renames`: the coordinator's
    plan commits, which cannot change the result of the checks), commit and push at once.
 4. Otherwise release the lock and verify the new tree, then go back to 1; after
    `max_reverify` re-verifications, give the PR back to the queue (claim released, no
@@ -192,15 +202,26 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | Edit/commit in the main worktree | blocked | blocked | allowed | allowed |
 | `git push` to a protected branch | blocked | only via `pool-state.py lock run --` (and `integrate-pr.sh`) | only via `pool-state.py lock run --` | allowed |
 | `git push --all/--mirror`, `gh pr merge` | blocked | blocked | blocked | allowed |
+| `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
+| `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
+| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>` | blocked | blocked | allowed | allowed |
+| Setting `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`, `MULTI_AGENT_HERDR_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
+| Anything above, while `.claude/multi-agent-herdr.json` is invalid | blocked | blocked | blocked | blocked (fail closed; the file itself may be edited) |
 
 \* Allowed by the guard because these roles start and message agents; the rule "never answer
 another agent's dialog" stays a rule of their skills and prompts.
 
-The guards stay guardrails, not a sandbox (README, Limitations): a script file is not
-inspected, which is why `integrate-pr.sh` itself checks `CLAUDE_ROLE`, the worktree and the
-claim.
+The roles come from environment variables, so they are defended in three layers.
+
+1. The guard blocks any command that sets one of those variables.
+2. The guard blocks the role-only scripts for sessions without the role.
+3. `integrate-pr.sh` checks that the herdr agent of its own pane is the integrator it claims
+   to be.
+
+The guards stay guardrails, not a sandbox (README, Limitations): a script file of the
+agent's own is not inspected.
 
 ## Failure modes
 
@@ -217,6 +238,10 @@ claim.
 | The coordinator is down | integrators keep merging; reports accumulate; development agents' questions get no answer (the `pr` skill tells the user when the coordinator is not live) | on restart, `coordinate` reads pending reports and catches up merged PRs |
 | Every integrator is down | `route` exits 1; announcements are not sent | the PRs wait in GitHub's queue; the coordinator's scale check spawns `min` members |
 | herdr cannot be asked | claims are judged by age only; `route` finds nobody | nothing is merged twice: claims still hold until their TTL |
+| One herdr listing misses a live integrator | its claim is marked `missing_since`, not taken | the next listing that shows it clears the mark (its heartbeat rewrites the claim) |
+| A claim changes hands anyway during a long verification | the first integrator re-checks its claim under the merge lock | it pushes nothing (exit 10) and leaves the PR to the new owner |
+| The push under the merge lock hangs | killed after 600 s (`lock run --max-seconds`) | the claim is released and the PR goes back to the queue (exit 6) |
+| `.claude/multi-agent-herdr.json` becomes invalid | every role loses its rights (fail closed) | fix the file (the Edit guard allows that one file); `project-config.py` names the error |
 | The machine runs out of memory | every agent loses its turn | prevented by the resource budget below |
 
 ## Scaling
@@ -296,6 +321,13 @@ Resources are therefore **negotiated**, not computed. The coordinator is the arb
   frees its slot. A nested call (`$MULTI_AGENT_HERDR_SLOT` set) runs at once instead of
   deadlocking.
 - Waiters poll every 2 s with no FIFO order: who goes first is the coordinator's call.
+- Its limits:
+  - it binds only the commands run through it, not a suite an agent starts by hand;
+  - setting `MULTI_AGENT_HERDR_SLOT` would skip it, so the guard blocks that;
+  - when its state directory cannot be created it warns and runs the command anyway, so the
+    floor never makes a verification fail;
+  - an invalid `resources.json` makes every wrapped command fail. `resource-budget.py
+    limits` shows the error.
 
 **The resource board** (`resource-board.sh`) is a human-readable Markdown sheet, machine-wide,
 with one file per agent so nobody overwrites anybody.
@@ -428,7 +460,7 @@ It is used in both modes. In single mode it runs in the main worktree on the bas
    plan PR verified by the pool, costs a full verification per tick.
 3. **Speculative batching** (verify A+B together) is not implemented, because the machine's
    memory is the bottleneck. Revisit on a bigger machine or with CI-hosted verification.
-4. **`reverify_exempt_paths` defaults to `docs/phases/*`.** A project whose checks read the
+4. **`reverify_exempt_paths` defaults to `docs/phases/*.md`.** A project whose checks read the
    plan (a docs linter, link checks) must set it to `[]`.
 5. **Scaling is the coordinator's judgment.** The rule of thumb counts every live
    development agent, idle ones included. Should a hard minimum or maximum ever be

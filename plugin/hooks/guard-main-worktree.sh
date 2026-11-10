@@ -9,7 +9,8 @@
 # `integrators` object in .claude/multi-agent-herdr.json, docs/multi-integrator.md) the main
 # worktree belongs to the coordinator (CLAUDE_ROLE=coordinator, scripts/coordinator.sh)
 # instead; the pool's integrators work in their own verify worktrees and are blocked here
-# like any other session. An invalid settings file counts as single mode.
+# like any other session. With an invalid settings file no role may change the main worktree
+# (fail closed), except to edit that file itself.
 #
 # The check is on the *target file*, not on the session's directory, so an agent sitting in a
 # feature worktree is also stopped from editing the main checkout by absolute path. A file is
@@ -39,8 +40,15 @@ plugin_enabled "$repo_root" || exit 0
 
 if [[ "$git_dir" == "$common_dir" ]]; then
     if [[ "$role" == integrator || "$role" == coordinator ]]; then
-        mode=$("$(dirname "$0")/../scripts/project-config.py" --root "$repo_root" mode 2>/dev/null) || mode=single
+        mode=$("$(dirname "$0")/../scripts/project-config.py" --root "$repo_root" mode 2>/dev/null) || mode=invalid
         [[ "$role/$mode" == integrator/single || "$role/$mode" == coordinator/pool ]] && exit 0
+        if [[ "$mode" == invalid ]]; then
+            # Fail closed: an unreadable settings file must not hand a pool integrator the
+            # single integrator's rights. Only the file itself may be edited, to fix it.
+            [[ "$file" == "$repo_root/.claude/multi-agent-herdr.json" ]] && exit 0
+            echo "Blocked: .claude/multi-agent-herdr.json is invalid, so no role may change the main worktree until it is fixed (the file itself may be edited; check it with the plugin's scripts/project-config.py)." >&2
+            exit 2
+        fi
     fi
     cat >&2 <<MSG
 Blocked: $file is in the main worktree, which only the integrator session may modify.

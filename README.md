@@ -120,7 +120,7 @@ per-repository default applies):
 | `protected_branches` | `[]` | extra `fnmatch` patterns only the integrator may push; `main` and `base_branch` are always protected |
 | `worktree_prefix` | `<repo>-` | development worktrees are `../<worktree_prefix><name>` |
 | `coordinator_name` | `coordinator-<repo>` (same rule) | pool mode: the coordinator's herdr name (`scripts/coordinator.sh`) |
-| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
+| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
 (`project-config.py base_branch`, `project-config.py integrators.max`) or all of them as JSON
@@ -148,6 +148,19 @@ once. Everything else is negotiated: agents note what they run on the resource b
 (`resource-board.sh note|clear|show|prune`), send `RESOURCE REQUEST`s to the coordinator,
 which answers `GO`, `WAIT` or `YIELD` and declares save mode when memory is low
 ([docs/multi-integrator.md](docs/multi-integrator.md), "Resources").
+
+### What changes in single mode
+
+A project that never sets `integrators` keeps one integrator, but 0.2.0 still changes a few
+things for it:
+
+- `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills run the project's heavy
+  scripts through `resource-budget.py`. They may wait for a free heavy slot, and an invalid
+  `~/.config/multi-agent-herdr/resources.json` makes them fail.
+- `integrate` merges with `integrate-pr.sh`, and after a merge it cleans up the author's
+  worktree with `cleanup-worktree.sh`.
+- An invalid `.claude/multi-agent-herdr.json` now blocks the integrator too (fail closed),
+  except for editing that file.
 
 ### Pool mode
 
@@ -294,6 +307,9 @@ or attaches the TUI.
 - `verify-merge.sh` is only as strong as your `scripts/check.sh`.
 - Pool mode assumes every integrator runs on the same machine (claims and the merge lock live
   in the git common dir), and needs a parallel-safe `scripts/check.sh`.
+- Pool mode trusts environment variables for roles; the guard blocks commands that set them
+  and the role-only scripts for other sessions, and `integrate-pr.sh` checks its herdr
+  pane's name, but a script file of an agent's own is not inspected.
 - The heavy-slot floor only applies to the plugin's own entry points; an agent that runs a
   test suite by hand outside `resource-budget.py run` is not counted, and the board is only
   as accurate as the notes agents write.

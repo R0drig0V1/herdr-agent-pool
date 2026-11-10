@@ -134,9 +134,10 @@ project_config = _load_project_config()
 def settings(path: str) -> dict[str, Any] | None:
     """Project settings of the enabled repository containing `path`, or None.
 
-    An invalid `.claude/multi-agent-herdr.json` falls back to the defaults: the guard must not
-    wedge every session, and the defaults still protect `main` (the skills and scripts stop on
-    the invalid file and report it).
+    An invalid `.claude/multi-agent-herdr.json` gives the defaults marked `invalid`: the
+    defaults still protect `main` and name the herdr agents, and `privileges` grants nothing
+    to anyone while the file is invalid (fail closed: every role is read-only until it is
+    fixed; the Edit guard lets the integrator or coordinator fix the file itself).
     """
     dirs = git_dirs(path)
     if dirs is None or not enabled(dirs[1]):
@@ -145,7 +146,7 @@ def settings(path: str) -> dict[str, Any] | None:
     try:
         return project_config.load(root)  # type: ignore[no-any-return]
     except project_config.ConfigError:
-        return project_config.defaults(root)  # type: ignore[no-any-return]
+        return {**project_config.defaults(root), "invalid": True}
 
 
 def protected(config: dict[str, Any]) -> list[str]:
@@ -154,18 +155,25 @@ def protected(config: dict[str, Any]) -> list[str]:
 
 
 # What a role may do in a repository, by mode (see the module docstring).
-EVERYTHING = frozenset({"main_worktree", "herdr", "push", "merge"})
+EVERYTHING = frozenset({"main_worktree", "herdr", "push", "merge", "manage"})
 POOL_ROLES = {
-    "coordinator": frozenset({"main_worktree", "herdr", "locked_push"}),
+    "coordinator": frozenset({"main_worktree", "herdr", "locked_push", "manage"}),
     "integrator": frozenset({"herdr", "locked_push"}),
 }
+# Variables the workflow trusts for identity: setting one in a command would let any session
+# pose as an integrator or the coordinator (or skip the heavy-slot floor).
+PROTECTED_ENV = frozenset(
+    {"CLAUDE_ROLE", "MULTI_AGENT_HERDR_NAME", "MULTI_AGENT_HERDR_SLOT", "HERDR_ENV"}
+)
+DECLARERS = {"export", "declare", "typeset", "readonly", "local"}
+FORCE_FLAGS = {"-f", "--force", "-d", "--delete"}
 LOCK_RUNNER = "pool-state.py"
 
 
 def privileges(config: dict[str, Any] | None) -> frozenset[str]:
     """What this session's CLAUDE_ROLE may do in the repository with these settings."""
     role = os.environ.get("CLAUDE_ROLE", "")
-    if config is None or not role:
+    if config is None or not role or config.get("invalid"):
         return frozenset()
     if config.get("mode") == "pool":
         return POOL_ROLES.get(role, frozenset())
@@ -177,6 +185,84 @@ def messageable(config: dict[str, Any]) -> set[str]:
     if config.get("mode") == "pool":
         return {config["coordinator_name"], *config["integrator_pool"]}
     return {config["integrator_name"]}
+
+
+ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(=|$)")
+
+
+def sets_identity(words: list[str]) -> str | None:
+    """The protected variable a command assigns (`VAR=x cmd`, `env VAR=x`, `export VAR`)."""
+    for i, word in enumerate(words):
+        if word in DECLARERS:
+            names = [ASSIGNMENT.match(a) for a in words[i + 1 :]]
+            return next((m.group(1) for m in names if m and m.group(1) in PROTECTED_ENV), None)
+        match = ASSIGNMENT.match(word)
+        if match and match.group(2) == "=":
+            if match.group(1) in PROTECTED_ENV:
+                return match.group(1)
+        elif not (word == "env" or word in WRAPPERS or word.startswith("-")):
+            return None
+    return None
+
+
+def tool_need(prog: str, args: list[str]) -> str | None:
+    """The privilege one of the plugin's role-only scripts needs, or None (anyone may run it)."""
+    sub = args[:1]
+    if prog == "integrate-pr.sh":
+        return "locked_push"
+    if prog == LOCK_RUNNER:
+        if sub in (["claim"], ["release"], ["heartbeat"], ["bounce"]) or args[:2] == [
+            "lock",
+            "run",
+        ]:
+            return "locked_push"
+        return "locked_push" if args[:2] in (["report", "add"], ["report", "done"]) else None
+    if prog == "integrator-pool.sh" and sub in (["spawn"], ["stop"]):
+        return "manage"
+    if prog == "cleanup-worktree.sh" and sub and sub != ["--list"]:
+        return "manage"
+    return None
+
+
+def check_tools(prog: str, args: list[str], cwd: str, session: str) -> str | None:
+    """Reason to block a role-only script of the plugin run by a session without the role.
+
+    The scripts also check CLAUDE_ROLE themselves, but that variable is the caller's to set;
+    this guard (with the PROTECTED_ENV rule) is what keeps a development agent out.
+    """
+    need = tool_need(prog, args)
+    if need is None:
+        return None
+    configs = [c for c in (settings(cwd), settings(session)) if c is not None]
+    if not configs or any(need in privileges(c) or "push" in privileges(c) for c in configs):
+        return None
+    who = (
+        "the integrators" if need == "locked_push" else "the dispatcher (integrator or coordinator)"
+    )
+    return f"`{prog} {' '.join(args[:2])}` is for {who} only"
+
+
+def strip_redirects(words: list[str], cwd: str) -> tuple[list[str], str | None]:
+    """The words without redirections, and a reason to block when one writes the main worktree.
+
+    `> f`, `>> f`, `2> f`, `&> f` (shlex splits the operator off): the operator, its target and
+    a file-descriptor number before it are dropped.
+    """
+    kept: list[str] = []
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if REDIRECT.match(word) or word == "<":
+            target = words[i + 1] if i + 1 < len(words) else ""
+            if word != "<" and target and not target.isdigit() and writes_into_main(cwd, target):
+                return kept, f"writes {target} inside the main worktree"
+            if kept and kept[-1].isdigit():
+                kept.pop()
+            i += 2
+            continue
+        kept.append(word)
+        i += 1
+    return kept, None
 
 
 def push_target(refspec: str) -> str:
@@ -294,7 +380,7 @@ def is_herdr(word: str, args: list[str]) -> bool:
     return word.startswith("$") and herdr_reason(args) is not None
 
 
-def check_segment(  # noqa: C901 (complexity 22; capped by lizard, see docs/code-quality.md)
+def check_segment(  # noqa: C901 (complexity 21; capped by lizard, see docs/code-quality.md)
     words: list[str], cwd: str, session: str = "", depth: int = 0
 ) -> str | None:
     """Reason to block this simple command, or None.
@@ -304,23 +390,12 @@ def check_segment(  # noqa: C901 (complexity 22; capped by lizard, see docs/code
     the herdr server, not on a directory, so a `cd` elsewhere must not disable them.
     """
     session = session or cwd
-    # Redirections (`> f`, `>> f`, `2> f`, `&> f`; shlex splits the operator off). Drop the
-    # operator, its target and a file-descriptor number before it from the words.
-    kept: list[str] = []
-    i = 0
-    while i < len(words):
-        word = words[i]
-        if REDIRECT.match(word) or word == "<":
-            target = words[i + 1] if i + 1 < len(words) else ""
-            if word != "<" and target and not target.isdigit() and writes_into_main(cwd, target):
-                return f"writes {target} inside the main worktree"
-            if kept and kept[-1].isdigit():
-                kept.pop()
-            i += 2
-            continue
-        kept.append(word)
-        i += 1
-    words = kept
+    words, reason = strip_redirects(words, cwd)
+    if reason:
+        return reason
+    variable = sets_identity(words)
+    if variable and (settings(session) or settings(cwd)):
+        return f"setting {variable} in a command: it decides who an agent is"
     while words:
         if words[0] == "env" or words[0] in WRAPPERS:
             # `env VAR=value cmd`, `command cmd`, `exec cmd`...: the argument is the command.
@@ -344,6 +419,9 @@ def check_segment(  # noqa: C901 (complexity 22; capped by lizard, see docs/code
     if inner is not None and depth < MAX_DEPTH:
         return check_command(inner, cwd, session, depth + 1)
 
+    reason = check_tools(prog, args, cwd, session)
+    if reason:
+        return reason
     if prog == LOCK_RUNNER and args[:2] == ["lock", "run"] and "--" in args:
         # The merge lock's runner: check the command it runs, as run under the lock.
         return check_locked(args[args.index("--") + 1 :], cwd, session, depth)
@@ -399,6 +477,11 @@ def check_push(args: list[str], config: dict[str, Any], locked: bool) -> str | N
         if not any(fnmatch.fnmatchcase(branch, p) for p in patterns):
             continue
         if "locked_push" in privs:
+            forced = ref.startswith(("+", ":")) or any(
+                a in FORCE_FLAGS or a.startswith("--force") for a in args
+            )
+            if forced:
+                return f"forcing, deleting or replacing the protected branch {branch}"
             if locked:
                 continue
             return (f"pushing to the protected branch {branch} outside the merge lock; run it as "
@@ -466,15 +549,18 @@ def main() -> int:
         payload = json.load(sys.stdin)
         command = payload.get("tool_input", {}).get("command", "")
         cwd = payload.get("cwd") or os.getcwd()
+        config = settings(cwd)
         if os.environ.get("CLAUDE_ROLE") == "integrator":
-            config = settings(cwd)
-            if config is None or config.get("mode") != "pool":
+            if config is None or (config.get("mode") != "pool" and not config.get("invalid")):
                 return 0  # single mode: the integrator may do everything
         reason = check_command(command, cwd, session=cwd)
     except Exception:  # a broken guard must not block the session
         return 0
     if not reason:
         return 0
+    if config is not None and config.get("invalid"):
+        reason += (". .claude/multi-agent-herdr.json is invalid (run the plugin's "
+                   "project-config.py): every session is read-only until it is fixed")  # fmt: skip
     print(
         f"Blocked: {reason}.\n"
         "Only the integrator agent (in pool mode: the coordinator) may change the main worktree, "
