@@ -216,7 +216,13 @@ another agent's dialog" stays a rule of their skills and prompts.
 The roles come from environment variables, which any session can set, so the real boundary
 is herdr's own record of who runs in which pane.
 
-1. **The boundary.** In pool mode, `pool-state.py` refuses claim, release, heartbeat, bounce,
+1. **The boundary.** Who calls is decided by herdr and the process tree, not by variables.
+   `pool-state.py whoami` takes the pane in `$HERDR_PANE_ID`, but believes it only when that
+   pane's shell (`herdr pane process-info`) is an ancestor of the calling process. A forged
+   id points at a pane whose shell is not an ancestor, and a missing id gives no answer: no
+   fallback to the focused pane. herdr calls time out after 10 s.
+
+   In pool mode, `pool-state.py` refuses (exit 4) claim, release, heartbeat, bounce,
    `lock run` and the plan reports unless the herdr agent of the calling pane is a member of
    `integrator_pool` (or the coordinator, for `lock run` and `report done`), and `--owner` is
    that agent. When herdr cannot answer, it refuses (fail closed). `integrate-pr.sh` requires

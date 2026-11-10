@@ -31,6 +31,7 @@ Commands:
     lock status                         exit 0 free; 1 held (prints the owner)
     report add N --sha SHA --owner NAME [--tasks TEXT] | report list | report done N
     report known N                      exit 0 when PR N was reported (pending or done)
+    whoami                              the herdr agent of the calling pane (exit 4: unknown)
     activity NAME | idle-seconds NAME   touch / read a member's last activity
 
 A claim is **stale** when its heartbeat is older than `integrators.claim_ttl_minutes` (default
@@ -45,8 +46,10 @@ integrator never wedges the pool. It only orders pushes; correctness comes from 
 since a push that is not a fast-forward is rejected (the plugin never force-pushes).
 
 In pool mode the commands that change the claims (claim, release, heartbeat, bounce), take the
-merge lock (lock run) or touch plan reports (report add, report done) first check who calls:
-the herdr agent of the calling pane must be a pool member (the coordinator may also `lock run`
+merge lock (lock run) or touch plan reports (report add, report done) first check who calls
+(`caller_name`: the pane in $HERDR_PANE_ID, believed only when that pane's shell is an
+ancestor of this process, so a forged id fails): the herdr agent of the calling pane must be a
+pool member (the coordinator may also `lock run`
 and `report done`), `--owner` must be that agent, and when herdr cannot answer the command is
 refused (exit 4). The environment variables that carry the roles are not proof of anything.
 
@@ -118,12 +121,38 @@ def herdr_json(*args: str) -> Any:
     return json.loads(proc.stdout)
 
 
+def ancestors() -> set[int]:
+    """PIDs of this process's ancestors (up to the first process above init)."""
+    pids, pid = set(), os.getppid()
+    for _ in range(64):
+        if pid <= 1 or pid in pids:
+            break
+        pids.add(pid)
+        out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True)
+        try:
+            pid = int(out.stdout.strip())
+        except ValueError:
+            break
+    return pids
+
+
 def caller_name() -> str | None:
-    """Herdr agent name of the pane this command runs in, or None when it cannot be told."""
-    if os.environ.get("HERDR_ENV") != "1":
+    """Herdr agent name of the pane this command really runs in, or None when it cannot be told.
+
+    `$HERDR_PANE_ID` names the pane, but any command can set it (and `herdr pane current
+    --current` both honours it and, without it, falls back to the *focused* pane). So the pane
+    is only believed when its shell (`herdr pane process-info`) is an ancestor of this process:
+    a forged id points at a pane whose shell is not. No id, no answer from herdr, or a pane
+    that is not ours: None (callers refuse).
+    """
+    pane = os.environ.get("HERDR_PANE_ID", "")
+    if os.environ.get("HERDR_ENV") != "1" or not pane:
         return None
     try:
-        pane = herdr_json("pane", "current", "--current")["result"]["pane"]["pane_id"]
+        info = herdr_json("pane", "process-info", "--pane", pane)["result"]["process_info"]
+        shell = int(info["shell_pid"])
+        if info.get("pane_id", pane) != pane or shell <= 1 or shell not in ancestors():
+            return None
         agents = herdr_json("agent", "list")["result"]["agents"]
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
         return None
@@ -511,6 +540,7 @@ def parser() -> argparse.ArgumentParser:
         report_sub.add_parser(name).add_argument("pr", type=int)
     for name in ("activity", "idle-seconds"):
         sub.add_parser(name).add_argument("name")
+    sub.add_parser("whoami")
     return p
 
 
@@ -558,6 +588,14 @@ def run(state: State, args: argparse.Namespace) -> int:
         return lock_run(state, args) if args.lock_cmd == "run" else lock_status(state)
     elif args.cmd == "report":
         return report(state, args)
+    elif args.cmd == "whoami":
+        me = caller_name()
+        if me is None:
+            print("pool-state: cannot tell which herdr agent runs this (outside herdr, "
+                  "$HERDR_PANE_ID unset, or not this process's pane)", file=sys.stderr)  # fmt: skip
+            return EXIT_IDENTITY
+        print(me)
+        return 0
     elif args.cmd == "activity":
         state.touch(args.name)
         return 0

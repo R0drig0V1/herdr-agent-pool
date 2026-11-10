@@ -68,6 +68,7 @@ case "$1 $2" in
     "agent list") cat "$FAKE_AGENTS" ;;
     "pane current") printf '{"result":{"pane":{"pane_id":"%s"}}}\n' "$FAKE_PANE" ;;
     "pane list") if [[ -n "${FAKE_PANES:-}" ]]; then cat "$FAKE_PANES"; else echo '{"result":{"panes":[]}}'; fi ;;
+    "pane process-info") printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":%s}}}\n' "$4" "${FAKE_SHELL_PID:-0}" ;;
     "agent rename") echo "rename $3 $4" >> "$FAKE_LOG"; echo '{"result":{}}' ;;
     "workspace create") shift 2; echo "workspace-create $*" >> "$FAKE_LOG"
         echo '{"result":{"workspace":{"workspace_id":"w9"},"root_pane":{"pane_id":"w9:p1"}}}' ;;
@@ -94,6 +95,9 @@ esac
 FAKE
 chmod +x "$fake/herdr" "$fake/gh"
 export PATH="$fake:$PATH" FAKE_AGENTS="$work/agents.json" FAKE_LOG="$work/herdr.log" FAKE_PANE="w1:p1"
+# Every fake pane's shell is this test's shell: an ancestor of each command the tests run, which
+# is what pool-state.py's caller_name requires before it believes $HERDR_PANE_ID.
+export FAKE_SHELL_PID=$$
 export FAKE_GH="$work/gh"; mkdir -p "$FAKE_GH"; echo '[]' > "$FAKE_GH/list.json"
 agents() {  # agents <name|-> <pane> <status> <cwd> ...: write the fake `herdr agent list`
     local json='[]'
@@ -234,6 +238,10 @@ for probe in "env -u FOO CLAUDE_ROLE=integrator $ipr 3" \
     expect 2 "guard: blocks '$probe'" "$g" "$(bash_cmd "$probe" "$d1")"
 done
 expect 0 "guard: env -u alone is fine"                  "$g" "$(bash_cmd 'env -u FOO ls' "$d1")"
+for probe in "HERDR_PANE_ID=w1:p1 $ps claim 3 --owner x" "env HERDR_TAB_ID=w1:t1 ls" \
+             "export HERDR_WORKSPACE_ID=w1" "env -u A HERDR_SOCKET_PATH=/tmp/s ls" "HERDR_BIN_PATH=/x ls"; do
+    expect 2 "guard: blocks '$probe'" "$g" "$(bash_cmd "$probe" "$d1")"
+done
 expect 0 "guard: bash running an ordinary script"       "$g" "$(bash_cmd 'bash scripts/check.sh' "$d1")"
 expect 0 "guard: python3 -c"                            "$g" "$(bash_cmd "python3 -c 'print(1)'" "$d1")"
 expect 2 "guard: a developer runs integrate-pr.sh"      "$g" "$(bash_cmd "$ipr 12" "$d1")"
@@ -264,7 +272,7 @@ CLAUDE_ROLE=coordinator expect 2 "fail closed: the coordinator too"             
 claim="$scripts/claim-integrator.sh"
 claim_in() {  # claim_in <dir> <pane> [env...]: exit code of claim-integrator.sh
     local dir="$1" pane="$2"; shift 2
-    (cd "$dir" && env HERDR_ENV=1 FAKE_PANE="$pane" "$@" "$claim" >/dev/null 2>&1)
+    (cd "$dir" && env HERDR_ENV=1 FAKE_PANE="$pane" HERDR_PANE_ID="$pane" "$@" "$claim" >/dev/null 2>&1)
 }
 agents - w1:p1 idle "$proj"  - w2:p1 idle "$wt1"
 : > "$FAKE_LOG"; claim_in "$proj" w1:p1 CLAUDE_ROLE=coordinator; status=$?
@@ -287,11 +295,11 @@ ss() {  # ss <cwd> [env...]: the hook's additionalContext
     jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}' \
         | env HERDR_ENV=1 "$@" "$ssi" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty'
 }
-out=$(ss "$wt1" CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1 FAKE_PANE=w2:p1)
+out=$(ss "$wt1" CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1)
 check "session-start: pool member in its verify worktree" bash -c '[[ "$1" == *"herdr agent integrator-proj-1"*"integrator pool"* ]]' _ "$out"
-out=$(ss "$proj" CLAUDE_ROLE=coordinator FAKE_PANE=w1:p1)
+out=$(ss "$proj" CLAUDE_ROLE=coordinator FAKE_PANE=w1:p1 HERDR_PANE_ID=w1:p1)
 check "session-start: coordinator in the main worktree" bash -c '[[ "$1" == *"herdr agent coordinator-proj (the coordinator)"* ]]' _ "$out"
-out=$(ss "$d1" CLAUDE_ROLE=integrator FAKE_PANE=w2:p1)
+out=$(ss "$d1" CLAUDE_ROLE=integrator FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1)
 check "session-start: no claim in a linked worktree without a pool name" [ -z "$out" ]
 out=$(jq -nc --arg d "$proj" '{cwd: $d}' | CLAUDE_ROLE=coordinator "$hooks/session-start-worktree.sh")
 check "session-start-worktree: silent for the coordinator" [ -z "$out" ]
@@ -314,8 +322,8 @@ echo '{"integrators": {"max": 8}}' > "$psr/.claude/multi-agent-herdr.json"
 git -C "$psr" add -A && git -C "$psr" commit --quiet -m init
 git -C "$psr" remote add origin "$origin" && git -C "$psr" fetch --quiet origin
 mem() { echo "integrator-psr-$1"; }
-as_m() { local i="$1"; shift; (cd "$psr" && HERDR_ENV=1 FAKE_PANE="w$i:p9" "$ps" "$@"); }   # as member i
-as_c() { (cd "$psr" && HERDR_ENV=1 FAKE_PANE="wc:p9" "$ps" "$@"); }                       # as the coordinator
+as_m() { local i="$1"; shift; (cd "$psr" && HERDR_ENV=1 FAKE_PANE="w$i:p9" HERDR_PANE_ID="w$i:p9" "$ps" "$@"); }   # as member i
+as_c() { (cd "$psr" && HERDR_ENV=1 FAKE_PANE="wc:p9" HERDR_PANE_ID="wc:p9" "$ps" "$@"); }                       # as the coordinator
 psq() { (cd "$psr" && "$ps" "$@"); }                                                       # read-only
 members() {  # members <i>...: the live agents are these members and the coordinator
     local list=(coordinator-psr wc:p9 idle "$psr") i
@@ -349,27 +357,34 @@ check "pool-state: no .stale-pr-* left behind" \
 check "pool-state: refused outside herdr (exit 4)"     exits 4 psq claim 50 --owner "$(mem 1)"
 agents foo w0:p9 idle "$psr"  "$(mem 1)" w1:p9 idle "$psr"
 check "pool-state: refused to an agent outside the pool (exit 4)" \
-    exits 4 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w0:p9 "$2" claim 50 --owner foo' _ "$psr" "$ps"
+    exits 4 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w0:p9 HERDR_PANE_ID=w0:p9 "$2" claim 50 --owner foo' _ "$psr" "$ps"
 check "pool-state: refused when --owner is another agent (exit 4)" exits 4 as_m 1 claim 50 --owner "$(mem 2)"
 check "pool-state: refused when herdr does not answer (exit 4)" \
-    exits 4 env FAKE_HERDR_DOWN=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w1:p9 "$2" claim 50 --owner "$3"' _ "$psr" "$ps" "$(mem 1)"
+    exits 4 env FAKE_HERDR_DOWN=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w1:p9 HERDR_PANE_ID=w1:p9 "$2" claim 50 --owner "$3"' _ "$psr" "$ps" "$(mem 1)"
 members 1 2
 check "pool-state: the coordinator may take the merge lock" as_c lock run --owner coordinator-psr -- true
 check "pool-state: a member may not mark a plan report done (exit 4)" exits 4 as_m 1 report "done" 3
 check "pool-state: read-only commands need no identity" psq claims
+check "pool-state: whoami names the calling pane's agent" [ "$(as_m 1 whoami)" == "$(mem 1)" ]
+check "pool-state: no \$HERDR_PANE_ID, no identity (no fallback to the focused pane)" \
+    exits 4 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w1:p9 "$2" claim 50 --owner "$3"' _ "$psr" "$ps" "$(mem 1)"
+sleep 30 & stranger=$!
+check "pool-state: a forged \$HERDR_PANE_ID is refused (the pane's shell is not an ancestor)" \
+    exits 4 env FAKE_SHELL_PID="$stranger" bash -c 'cd "$1" && HERDR_ENV=1 HERDR_PANE_ID=w1:p9 "$2" claim 50 --owner "$3"' _ "$psr" "$ps" "$(mem 1)"
+kill "$stranger" 2>/dev/null; wait "$stranger" 2>/dev/null
 # One glitchy herdr listing does not hand a live claim over; a later glitch starts a new grace.
 as_m 1 claim 43 --owner "$(mem 1)" >/dev/null
 members 2   # member 1 is missing from this listing
 check "pool-state: an owner missing once keeps its claim (grace)" \
-    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
+    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
 members 1 2   # back: the mark is cleared
 psq claims >/dev/null
 sleep 1.2; members 2   # missing again, more than the grace after the first glitch
 check "pool-state: a second glitch after a reappearance starts a new grace" \
-    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
+    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
 sleep 1.2
 check "pool-state: an owner missing past the grace loses it" \
-    env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 "$2" claim 43 --owner "$3" >/dev/null' _ "$psr" "$ps" "$(mem 2)"
+    env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3" >/dev/null' _ "$psr" "$ps" "$(mem 2)"
 # Eight members race for one stale claim: exactly one takes it (claims/.lock).
 members 1 2 3 4 5 6 7 8
 as_m 1 claim 44 --owner "$(mem 1)" >/dev/null
@@ -456,9 +471,9 @@ on_main() { git -C "$origin" cat-file -e "main:$1" 2>/dev/null; }
 remote_branch() { git -C "$origin" rev-parse -q --verify "refs/heads/$1" >/dev/null; }
 integrate() {  # integrate <N> [args...]: claim as $me and run integrate-pr.sh; sets out, rc
     local n="$1"; shift
-    (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 "$ps" claim "$n" --owner "$me" >/dev/null)
+    (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ps" claim "$n" --owner "$me" >/dev/null)
     export CHECK_COUNT="$work/count-$n"; : > "$CHECK_COUNT"
-    out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 \
+    out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 \
         "$ipr" "$n" "$@" 2>&1); rc=$?
     unset CHECK_COUNT CHECK_HOOK
 }
@@ -532,18 +547,18 @@ check "integrate-pr: base moved by code: verified again, then merged" \
 check "integrate-pr: main has both changes" bash -c 'on() { git -C "$1" cat-file -e "main:$2"; }; on "$1" src/other.txt && on "$1" src/seven.txt' _ "$origin"
 
 make_pr 10 feat/ten src/ten.txt ten
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a PR it did not claim (exit 2)" bash -c '[[ $1 == 2 && "$2" == *"not claimed"* ]]' _ "$rc" "$out"
-out=$(cd "$proj" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$proj" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses the main worktree in pool mode (exit 2)" [ "$rc" == 2 ]
 out=$(cd "$wt1" && env CLAUDE_ROLE=coordinator "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses the coordinator (exit 1)" [ "$rc" == 1 ]
-(cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 "$ps" claim 10 --owner "$me" >/dev/null)
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w9:p9 "$ipr" 10 2>&1); rc=$?
+(cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ps" claim 10 --owner "$me" >/dev/null)
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w9:p9 HERDR_PANE_ID=w9:p9 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a pane whose herdr agent is not \$me (exit 2)" \
     bash -c '[[ $1 == 2 && "$2" == *"herdr agent is"* ]]' _ "$rc" "$out"
 agents "$me" w2:p1 idle "$wt1"  foo w8:p1 idle "$wt1"
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=foo HERDR_ENV=1 FAKE_PANE=w8:p1 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=foo HERDR_ENV=1 FAKE_PANE=w8:p1 HERDR_PANE_ID=w8:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses an agent outside the pool, even named in the env (exit 2)" \
     bash -c '[[ $1 == 2 && "$2" == *"not a member of the integrator pool"* ]]' _ "$rc" "$out"
 agents "$me" w2:p1 idle "$wt1"
@@ -561,6 +576,20 @@ check "integrate-pr: a claim lost during the verification stops the push (exit 1
 check "integrate-pr: a lost claim stays with its new owner" \
     [ "$(cd "$proj" && "$ps" claims | awk -F'\t' '$1 == 10 { print $2 }')" == integrator-proj-2 ]
 rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10"   # the test's own takeover
+# herdr stops confirming the pane's agent while the PR is verified: nothing is pushed (exit 11).
+cat > "$work/hook-identity.sh" <<HOOK
+#!/usr/bin/env bash
+jq '.result.agents |= map(if .pane_id == "w2:p1" then .name = "intruder" else . end)' "$FAKE_AGENTS" > "$FAKE_AGENTS.new"
+mv "$FAKE_AGENTS.new" "$FAKE_AGENTS"
+HOOK
+chmod +x "$work/hook-identity.sh"; export CHECK_HOOK="$work/hook-identity.sh"
+rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10"
+before=$(git -C "$origin" rev-parse main)
+integrate 10
+check "integrate-pr: identity lost under the lock stops the push (exit 11)" \
+    bash -c '[[ $1 == 11 && "$2" == *"identity-refused"* && "$(git -C "$3" rev-parse main)" == "$4" ]]' _ "$rc" "$out" "$origin" "$before"
+agents "$me" w2:p1 idle "$wt1"
+rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10"
 # Code renamed into an exempt path on main: --no-renames sees the source change, so re-verify.
 make_pr 11 feat/eleven src/eleven.txt eleven
 cat > "$work/hook-rename.sh" <<HOOK
@@ -682,10 +711,10 @@ check "pool spawn: a startup dialog is escalated (exit 4), never answered" \
     bash -c '[[ $1 == 4 ]] && ! grep -q "send-keys" "$2"' _ "$status" "$FAKE_LOG"
 
 agents integrator-proj-2 w9:p1 idle "$wt2"  integrator-proj-1 w2:p1 idle "$wt1"
-(cd "$proj" && HERDR_ENV=1 FAKE_PANE=w9:p1 "$ps" claim 77 --owner integrator-proj-2 >/dev/null)
+(cd "$proj" && HERDR_ENV=1 FAKE_PANE=w9:p1 HERDR_PANE_ID=w9:p1 "$ps" claim 77 --owner integrator-proj-2 >/dev/null)
 (cd "$proj" && env HERDR_ENV=1 "$pool" stop 2 >/dev/null 2>&1); status=$?
 check "pool stop: refused while the member holds a claim (exit 5)" [ "$status" == 5 ]
-(cd "$proj" && HERDR_ENV=1 FAKE_PANE=w9:p1 "$ps" release 77 --owner integrator-proj-2 >/dev/null)
+(cd "$proj" && HERDR_ENV=1 FAKE_PANE=w9:p1 HERDR_PANE_ID=w9:p1 "$ps" release 77 --owner integrator-proj-2 >/dev/null)
 agents integrator-proj-2 w9:p1 working "$wt2"
 (cd "$proj" && env HERDR_ENV=1 "$pool" stop 2 >/dev/null 2>&1); status=$?
 check "pool stop: refused while the member works (exit 5)" [ "$status" == 5 ]

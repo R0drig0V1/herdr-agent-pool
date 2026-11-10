@@ -118,6 +118,12 @@ plugin id are still `claude-code-herdr` and `multi-agent-herdr@claude-code-herdr
   - `missing_since` is cleared when the owner is listed again;
   - `herdr agent list` has a 10 s timeout;
   - stale claims moved aside are deleted, and `claims/.lock` is mode 0600.
+- After the third review: the caller's identity no longer trusts `$HERDR_PANE_ID` alone.
+  `pool-state.py whoami` believes that pane only when its shell (`herdr pane
+  process-info`) is an ancestor of the caller, and there is no fallback to the focused pane.
+  `integrate-pr.sh` uses it too, and exits 11 when the identity is refused under the lock.
+  The guard also protects `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`,
+  `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH`.
 - Single mode: `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills go through
   `resource-budget.py` (an invalid `resources.json` fails them), and `integrate` cleans up
   merged worktrees.

@@ -163,7 +163,18 @@ POOL_ROLES = {
 # Variables the workflow trusts for identity: setting one in a command would let any session
 # pose as an integrator or the coordinator (or skip the heavy-slot floor).
 PROTECTED_ENV = frozenset(
-    {"CLAUDE_ROLE", "MULTI_AGENT_HERDR_NAME", "MULTI_AGENT_HERDR_SLOT", "HERDR_ENV"}
+    {
+        "CLAUDE_ROLE",
+        "MULTI_AGENT_HERDR_NAME",
+        "MULTI_AGENT_HERDR_SLOT",
+        "HERDR_ENV",
+        # herdr's own pane variables: `herdr pane current --current` honours HERDR_PANE_ID.
+        "HERDR_PANE_ID",
+        "HERDR_TAB_ID",
+        "HERDR_WORKSPACE_ID",
+        "HERDR_SOCKET_PATH",
+        "HERDR_BIN_PATH",
+    }
 )
 DECLARERS = {"export", "declare", "typeset", "readonly", "local"}
 FORCE_FLAGS = {"-f", "--force", "-d", "--delete"}

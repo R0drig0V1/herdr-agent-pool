@@ -141,6 +141,7 @@ it refuses when two rows share a key (two PRs took the same ADR number: bounce).
 | 8 | merge lock not acquired in 900 s; claim released | tell the coordinator or the user who holds it (`pool-state.py lock status`), back to step 1 |
 | 9 | nothing to merge: the head is already in `<base>` (also when someone else merged it while you verified); claim released | comment on the PR, step 1 |
 | 10 | the claim changed hands during the verification (another integrator took it over); nothing pushed, worktree reset | leave the PR to its new owner, step 1 |
+| 11 | herdr stopped confirming that this pane's agent is `<me>` (pool-state.py refused, exit 4); nothing pushed | stop and tell the user: the session's identity is in doubt |
 | 2 | a precondition failed, nothing changed: dirty worktree, claim not yours, PR not open, `origin/<B>` not the PR head yet, or this pane's herdr agent is not `<me>` | fix the precondition or tell the user |
 | 5, 6 | the commit or the push failed, or the push under the lock hung (killed after 600 s); nothing landed, claim released, worktree reset | tell the user (or the coordinator) with the output; do not retry blindly |
 

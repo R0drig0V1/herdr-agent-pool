@@ -50,7 +50,8 @@
 # settings; 2 precondition failed (nothing changed); 3 conflict (bounce); 4 verification failed
 # (bounce); 5 commit failed; 6 push failed or timed out; 7 the base kept moving; 8 merge lock
 # not acquired; 9 nothing to merge (the head is already in the base); 10 the claim changed hands
-# (nothing pushed). On 5-9 the claim is released and the worktree reset: the PR goes back to
+# (nothing pushed); 11 herdr stopped confirming this pane's identity under the lock (nothing
+# pushed). On 5-9 the claim is released and the worktree reset: the PR goes back to
 # the queue without a bounce. Needs git, gh, jq, python3 and (inside herdr) herdr.
 set -uo pipefail
 
@@ -75,8 +76,9 @@ if [[ "${1:-}" == --push-under-lock ]]; then
     # The claim may have changed hands while we verified (a stale-claim takeover): re-check it
     # here, under the lock, right before pushing.
     if [[ "$IPR_MODE" == pool ]]; then
-        "$IPR_PS" heartbeat "$IPR_N" --owner "$IPR_ME" >/dev/null 2>&1 \
-            || fail 10 "the claim on PR #$IPR_N is no longer $IPR_ME's: nothing pushed"
+        "$IPR_PS" heartbeat "$IPR_N" --owner "$IPR_ME" >/dev/null 2>&1; hb=$?
+        [[ $hb != 4 ]] || fail 11 "pool-state.py refused the heartbeat: herdr no longer confirms this pane is $IPR_ME; nothing pushed"
+        [[ $hb == 0 ]] || fail 10 "the claim on PR #$IPR_N is no longer $IPR_ME's: nothing pushed"
     fi
     git fetch --quiet origin "$IPR_BASE" || fail 6 "git fetch origin $IPR_BASE failed"
     now=$(git rev-parse "origin/$IPR_BASE") || fail 6 "no origin/$IPR_BASE"
@@ -136,9 +138,10 @@ stop() { echo "STOP: $*" >&2; result precondition "$*"; exit 2; }
 # this pane must be named $me (a session cannot pose as a pool member by setting variables).
 if [[ "$mode" == pool || "${HERDR_ENV:-}" == 1 ]]; then
     [[ "${HERDR_ENV:-}" == 1 ]] || stop "pool mode: run it inside herdr, as a pool member"
-    pane=$(herdr pane current --current 2>/dev/null | jq -r '.result.pane.pane_id // empty')
-    agent=$(herdr agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .name // empty')
-    [[ -n "$agent" && "$agent" == "$me" ]] || stop "this pane's herdr agent is '${agent:-none}', not $me"
+    # pool-state.py whoami: the agent of the pane in $HERDR_PANE_ID, believed only when that
+    # pane's shell is one of our ancestors (a forged id fails); herdr calls time out at 10 s.
+    agent=$("$ps" whoami 2>/dev/null) || agent=""
+    [[ -n "$agent" && "$agent" == "$me" ]] || stop "this pane's herdr agent is '${agent:-unknown}', not $me"
     if [[ "$mode" == pool ]] && ! jq -e --arg a "$agent" '.integrator_pool | index($a)' <<<"$config" >/dev/null; then
         stop "this pane's herdr agent, $agent, is not a member of the integrator pool ($(jq -r '.integrator_pool | join(", ")' <<<"$config"))"
     fi
@@ -266,6 +269,7 @@ while :; do
         3) finish_bounce conflict 3 "conflicts with the new origin/$base ($(cat "$IPR_STATE"))" ;;
         9) requeue nothing-to-merge 9 "the head is already in origin/$base: merged by someone else" ;;
         10) requeue claim-lost 10 "the claim changed hands during the verification; nothing pushed" keep-claim ;;
+        4|11) requeue identity-refused 11 "herdr no longer confirms this pane's agent (pool-state.py refused); nothing pushed" keep-claim ;;
         75) ;;
         124) requeue lock-timeout 8 "merge lock not acquired in 900 s" ;;
         125) requeue push-failed 6 "the push under the merge lock ran longer than 600 s and was killed" ;;
