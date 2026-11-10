@@ -292,8 +292,10 @@ check "claim: already named pool member" [ "$status" == 0 ]
 ssi="$hooks/session-start-integrator.sh"
 ss() {  # ss <cwd> [env...]: the hook's additionalContext
     local dir="$1"; shift
-    jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}' \
-        | env HERDR_ENV=1 "$@" "$ssi" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty'
+    # A here-string, not a pipe: a hook that exits without reading stdin would SIGPIPE jq.
+    env HERDR_ENV=1 "$@" "$ssi" 2>/dev/null \
+        <<<"$(jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}')" \
+        | jq -r '.hookSpecificOutput.additionalContext // empty'
 }
 out=$(ss "$wt1" CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1)
 check "session-start: pool member in its verify worktree" bash -c '[[ "$1" == *"herdr agent integrator-proj-1"*"integrator pool"* ]]' _ "$out"
@@ -416,9 +418,10 @@ as_m 2 release 9 --owner "$(mem 2)" >/dev/null; echo '[]' > "$FAKE_GH/list.json"
 
 lockf="$work/lock-order"; : > "$lockf"
 for i in 1 2; do
-    as_m "$i" lock run --owner "$(mem "$i")" -- sh -c "echo start >> '$lockf'; sleep 0.6; echo end >> '$lockf'" >/dev/null &
+    as_m "$i" lock run --owner "$(mem "$i")" -- sh -c "echo start >> '$lockf'; sleep 1; echo end >> '$lockf'" >/dev/null &
 done
-sleep 0.3; psq lock status >/dev/null; held_status=$?
+held_status=0   # poll: each lock run first checks its caller's identity, slower on a busy runner
+for _ in $(seq 1 50); do psq lock status >/dev/null; held_status=$?; [[ $held_status == 1 ]] && break; sleep 0.1; done
 wait
 check "pool-state: lock status while held" [ "$held_status" == 1 ]
 check "pool-state: the merge lock serialises its holders" [ "$(tr '\n' ' ' < "$lockf")" == "start end start end " ]
