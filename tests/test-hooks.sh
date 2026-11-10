@@ -420,9 +420,11 @@ run_ssi() {  # run_ssi <case> <cwd> [env...]: sets ss_out and ss_calls; fails if
     local case="$1" dir="$2" t0 t1 status; shift 2
     export FAKE_CLAIM_LOG="$work/claim-$case.log"; : > "$FAKE_CLAIM_LOG"
     t0=$(now)
-    ss_out=$(jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}' \
-        | env PATH="$fake:$PATH" CLAUDE_PLUGIN_ROOT="$fake_root" HERDR_ENV=1 CLAUDE_ROLE=integrator \
-              FAKE_CLAIM_CODES=0 FAKE_CLAIM_MSG="" "$@" "$ssi" 2>/dev/null); status=$?
+    # A here-string, not a pipe: the hook exits without reading stdin when the role is unset,
+    # and under pipefail jq's SIGPIPE would then fail the case, depending on timing.
+    ss_out=$(env PATH="$fake:$PATH" CLAUDE_PLUGIN_ROOT="$fake_root" HERDR_ENV=1 CLAUDE_ROLE=integrator \
+              FAKE_CLAIM_CODES=0 FAKE_CLAIM_MSG="" "$@" "$ssi" 2>/dev/null \
+              <<<"$(jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}')"); status=$?
     t1=$(now)
     sleep 0.1   # let a fast worker log its call
     ss_calls=$(wc -l < "$FAKE_CLAIM_LOG" | tr -d ' ')
