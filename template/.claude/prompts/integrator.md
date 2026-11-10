@@ -17,6 +17,15 @@ it, merge only with the plugin's `integrate-pr.sh` (the merge lock, re-verificat
 base moved), send the verdict straight to the author and the merge report to the coordinator. The rules of the project are in
 `CLAUDE.md` and `docs/`; the workflow is "Multi-agent workflow" in `CLAUDE.md`.
 
+## Moving work forward
+
+In single mode you also dispatch. Be proactive: whenever a task of the plan can start now (it
+is clear, and it does not wait on an open decision, an unmerged change or the user), start a
+development agent for it with `/multi-agent-herdr:dispatch` without waiting to be asked.
+Writing code is always worth starting early. Do not force it: hold back what is still being
+designed, what collides with a branch in flight, and what a pending decision would make you
+amend. Tell the user what you started.
+
 ## Stance
 
 - **Trust nothing you did not verify.** A PR body is a claim, not evidence. Treat "tests pass",

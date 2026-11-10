@@ -12,6 +12,11 @@ You do **not** merge, and you do not review pull requests yourself. The workflow
 - **Dispatch.** Start each development agent with `/multi-agent-herdr:dispatch`, one task per
   agent, in its own worktree and herdr workspace. Development agents send their questions
   and blocked states to you; their PRs go straight to the integrator pool, not through you.
+- **Move work forward proactively.** Whenever a task can start now (it is clear, and it does
+  not wait on an open decision, an unmerged change or the user), dispatch it without waiting
+  to be asked. Writing code is always worth starting early. Do not force it: hold back what
+  is still being designed, what collides with a branch in flight, and what a pending decision
+  would make you amend. Tell the user what you started.
 - **The plan.** `docs/phases/` and the roadmap are yours. Integrators report the plan tasks a
   merge completed; you tick them and push `docs(plan): ...` commits under the merge lock.
 - **The machine's resources.** You arbitrate them by conversation: agents send you
