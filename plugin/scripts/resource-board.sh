@@ -19,8 +19,9 @@
 #                                   write (or replace) your line: what you run, an estimate of
 #                                   its memory, and how long you expect it to last
 #   resource-board.sh clear [--as NAME]      remove your line (when it stopped)
-#   resource-board.sh show          the sheet, as Markdown: memory, heavy slots, notes, live
-#                                   agents and the ones that look idle
+#   resource-board.sh show          the sheet, as Markdown: memory, heavy slots, notes, the
+#                                   latest heavy commands with their peak memory, live agents
+#                                   and the ones that look idle
 #   resource-board.sh prune         remove the lines of agents that are no longer live
 #
 # Your name is --as, else $MULTI_AGENT_HERDR_NAME, else your herdr agent name (from the live
@@ -156,6 +157,16 @@ cmd_show() {
             | "| \($a)\($gone) | \(.what) | \(if .gb == "" then "?" else .gb end)"
               + " | \(mins($now - .since)) | \($left) | \(.cwd) |"' "$f" 2>/dev/null
     done
+    if [[ -s "$state/history.jsonl" ]]; then
+        echo
+        echo "## Recent heavy commands (peak memory of the largest process)"
+        echo
+        echo "| ended | command | agent | peak MB | took | exit |"
+        echo "|---|---|---|---|---|---|"
+        tail -n 10 "$state/history.jsonl" | jq -r --argjson now "$now" '
+            "| \((($now - (.since + .seconds)) / 60) | floor) min ago | \(.label) | \(if .agent == "" then "?" else .agent end)"
+            + " | \(.peak_mb) | \(.seconds) s | \(.exit) |"' 2>/dev/null
+    fi
     if [[ -n "$agents" ]]; then
         echo
         echo "## Agents that look idle (candidates to close: ask the user)"

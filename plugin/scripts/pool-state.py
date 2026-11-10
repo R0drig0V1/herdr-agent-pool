@@ -32,6 +32,12 @@ Commands:
     report add N --sha SHA --owner NAME [--tasks TEXT] | report list | report done N
     report known N                      exit 0 when PR N was reported (pending or done)
     whoami                              the herdr agent of the calling pane (exit 4: unknown)
+    await-ok N --head SHA --owner NAME [--paths TEXT]
+                                        PR N at SHA waits for the coordinator's OK (claim
+                                        released; the queue skips it until approved)
+    approve N --head SHA                the coordinator's OK for PR N at exactly SHA
+    approved N --head SHA               exit 0 when PR N at SHA has the OK
+    awaiting                            PRs waiting for the OK: N head integrator paths
     activity NAME | idle-seconds NAME   touch / read a member's last activity
 
 A claim is **stale** when its heartbeat is older than `integrators.claim_ttl_minutes` (default
@@ -176,6 +182,7 @@ def identity_problem(args: argparse.Namespace, config: dict[str, Any]) -> str | 
         ("claim", None): pool, ("release", None): pool, ("heartbeat", None): pool,
         ("bounce", None): pool, ("lock", "run"): pool | {coordinator},
         ("report", "add"): pool, ("report", "done"): {coordinator},
+        ("await-ok", None): pool, ("approve", None): {coordinator},
     }.get((args.cmd, sub))  # fmt: skip
     if allowed is None:
         return None  # read-only commands, and `activity`
@@ -225,7 +232,7 @@ class State:
         self.root = root
         self.ttl = ttl_minutes * 60
         self._live: set[str] | None | bool = False  # False: not asked yet
-        for sub in ("claims", "bounced", "lock", "reports/done", "members"):
+        for sub in ("claims", "bounced", "lock", "reports/done", "members", "awaiting", "approved"):
             os.makedirs(os.path.join(root, sub), exist_ok=True)
 
     def path(self, *parts: str) -> str:
@@ -383,12 +390,47 @@ class State:
         number = int(pr["number"])
         if pr.get("headRefOid") and self.bounced_head(number) == pr["headRefOid"]:
             return None
+        if pr.get("headRefOid") and self.awaits_ok(number, pr["headRefOid"]):
+            return None  # waits for the coordinator's OK on exactly this head
         owner = self.owner_of(number)
         if owner is None:
             return "free"
         if name and owner.get("owner") == name:
             return "mine"
         return "stale" if self.is_stale(number, owner) else None
+
+    # The coordinator's OK (integrators.needs_coordinator_ok) -----------------------------------
+
+    def await_ok(self, pr: int, fields: dict[str, str]) -> tuple[int, str]:
+        """Record that PR `pr` waits for the coordinator's OK (`fields`: head, owner, paths),
+        and release the owner's claim."""
+        data = {"pr": pr, **fields, "at": time.time()}
+        write_json(self.path("awaiting", f"pr-{pr}.json"), data)
+        self._release(pr, fields["owner"])
+        return 0, f"PR #{pr}: waits for the coordinator's OK at {fields['head'][:12]}"
+
+    def approve(self, pr: int, head: str, name: str) -> tuple[int, str]:
+        """The coordinator's OK for PR `pr` at exactly `head` (a new push needs a new OK)."""
+        write_json(
+            self.path("approved", f"pr-{pr}.json"),
+            {"pr": pr, "head": head, "by": name, "at": time.time()},
+        )
+        with contextlib.suppress(OSError):
+            os.remove(self.path("awaiting", f"pr-{pr}.json"))
+        return 0, f"PR #{pr}: approved by {name} at {head[:12]}"
+
+    def approved(self, pr: int, head: str) -> bool:
+        return (read_json(self.path("approved", f"pr-{pr}.json")) or {}).get("head") == head
+
+    def awaits_ok(self, pr: int, head: str) -> bool:
+        waiting = read_json(self.path("awaiting", f"pr-{pr}.json")) or {}
+        return waiting.get("head") == head and not self.approved(pr, head)
+
+    def awaiting(self) -> list[dict[str, Any]]:
+        found = [
+            read_json(self.path("awaiting", e)) for e in sorted(os.listdir(self.path("awaiting")))
+        ]
+        return sorted((d for d in found if d), key=lambda d: d.get("at", 0))
 
     # Plan reports ---------------------------------------------------------------------------
 
@@ -541,7 +583,41 @@ def parser() -> argparse.ArgumentParser:
     for name in ("activity", "idle-seconds"):
         sub.add_parser(name).add_argument("name")
     sub.add_parser("whoami")
+    wait_ok = sub.add_parser("await-ok")
+    wait_ok.add_argument("pr", type=int)
+    wait_ok.add_argument("--head", required=True)
+    wait_ok.add_argument("--owner", required=True)
+    wait_ok.add_argument("--paths", default="")
+    for name in ("approve", "approved"):
+        c = sub.add_parser(name)
+        c.add_argument("pr", type=int)
+        c.add_argument("--head", required=True)
+    sub.add_parser("awaiting")
     return p
+
+
+def approvals(state: State, args: argparse.Namespace) -> int:
+    """await-ok, approve, approved and awaiting (the coordinator's OK)."""
+    if args.cmd == "approved":
+        return 0 if state.approved(args.pr, args.head) else 1
+    if args.cmd == "awaiting":
+        for item in state.awaiting():
+            fields = [
+                item["pr"],
+                item.get("head", ""),
+                item.get("owner", ""),
+                item.get("paths", ""),
+            ]
+            print("\t".join(str(f) for f in fields))
+        return 0
+    with state.claims_lock():
+        if args.cmd == "await-ok":
+            fields = {"head": args.head, "owner": args.owner, "paths": args.paths}
+            code, message = state.await_ok(args.pr, fields)
+        else:
+            code, message = state.approve(args.pr, args.head, caller_name() or "the user")
+    print(message)
+    return code
 
 
 def queue(state: State, base: str, name: str) -> int:
@@ -565,29 +641,37 @@ def queue(state: State, base: str, name: str) -> int:
 
 
 def run(state: State, args: argparse.Namespace) -> int:
-    result: tuple[int, str] | None = None
-    if args.cmd == "claim":
-        result = state.claim(args.pr, args.owner, args.head)
-    elif args.cmd == "release":
-        result = state.release(args.pr, args.owner)
-    elif args.cmd == "heartbeat":
-        result = state.heartbeat(args.pr, args.owner)
-    elif args.cmd == "bounce":
-        result = state.bounce(args.pr, args.head, args.owner)
-    elif args.cmd == "claims":
+    """Dispatch one command; the claim commands print their message (stderr on failure)."""
+    claim_commands = {
+        "claim": lambda: state.claim(args.pr, args.owner, args.head),
+        "release": lambda: state.release(args.pr, args.owner),
+        "heartbeat": lambda: state.heartbeat(args.pr, args.owner),
+        "bounce": lambda: state.bounce(args.pr, args.head, args.owner),
+    }
+    if args.cmd in claim_commands:
+        code, message = claim_commands[args.cmd]()
+        print(message, file=sys.stdout if code == 0 else sys.stderr)
+        return code
+    if args.cmd == "queue":
+        return queue(state, args.base, args.owner)
+    if args.cmd == "lock":
+        return lock_run(state, args) if args.lock_cmd == "run" else lock_status(state)
+    if args.cmd == "report":
+        return report(state, args)
+    if args.cmd in ("await-ok", "approve", "approved", "awaiting"):
+        return approvals(state, args)
+    return inspect(state, args)
+
+
+def inspect(state: State, args: argparse.Namespace) -> int:
+    """claims, whoami, activity and idle-seconds."""
+    if args.cmd == "claims":
         with state.claims_lock():
             listing = [(pr, owner, state.is_stale(pr, owner)) for pr, owner in state.claims()]
         for pr, owner, stale in listing:
             age = time.time() - float(owner.get("heartbeat", 0)) if owner else 0
             status = "stale" if stale else "live"
             print(f"{pr}\t{owner.get('owner', '?')}\t{owner.get('head', '')}\t{age:.0f}\t{status}")
-        return 0
-    elif args.cmd == "queue":
-        return queue(state, args.base, args.owner)
-    elif args.cmd == "lock":
-        return lock_run(state, args) if args.lock_cmd == "run" else lock_status(state)
-    elif args.cmd == "report":
-        return report(state, args)
     elif args.cmd == "whoami":
         me = caller_name()
         if me is None:
@@ -595,20 +679,15 @@ def run(state: State, args: argparse.Namespace) -> int:
                   "$HERDR_PANE_ID unset, or not this process's pane)", file=sys.stderr)  # fmt: skip
             return EXIT_IDENTITY
         print(me)
-        return 0
     elif args.cmd == "activity":
         state.touch(args.name)
-        return 0
     elif args.cmd == "idle-seconds":
         try:
             mtime = os.path.getmtime(state.path("members", f"{args.name}.activity"))
         except OSError:
             mtime = 0
         print(int(time.time() - mtime))
-        return 0
-    code, message = result or (1, "unknown command")
-    print(message, file=sys.stdout if code == 0 else sys.stderr)
-    return code
+    return 0
 
 
 def report(state: State, args: argparse.Namespace) -> int:

@@ -142,6 +142,7 @@ it refuses when two rows share a key (two PRs took the same ADR number: bounce).
 | 9 | nothing to merge: the head is already in `<base>` (also when someone else merged it while you verified); claim released | comment on the PR, step 1 |
 | 10 | the claim changed hands during the verification (another integrator took it over); nothing pushed, worktree reset | leave the PR to its new owner, step 1 |
 | 11 | herdr stopped confirming that this pane's agent is `<me>` (pool-state.py refused, exit 4); nothing pushed | stop and tell the user: the session's identity is in doubt |
+| 12 | pool mode: the PR touches `integrators.needs_coordinator_ok` paths (migrations, security or privacy, `CLAUDE.md`, dependency manifests by default) and has no OK for this head; claim released, nothing merged, the queue skips it until the OK | tell the coordinator, with your review: `PR #<N> touches <paths>: needs your OK (pool-state.py approve <N> --head <sha>)`; step 1 |
 | 2 | a precondition failed, nothing changed: dirty worktree, claim not yours, PR not open, `origin/<B>` not the PR head yet, or this pane's herdr agent is not `<me>` | fix the precondition or tell the user |
 | 5, 6 | the commit or the push failed, or the push under the lock hung (killed after 600 s); nothing landed, claim released, worktree reset | tell the user (or the coordinator) with the output; do not retry blindly |
 
@@ -154,7 +155,8 @@ PR in progress, then do not claim the next one until it says otherwise.
 
 When `<base>` moves during a verification, the script merges the PR again onto the new base
 under the lock. It pushes at once when the new merged tree differs from the verified one only
-in `integrators.reverify_exempt_paths` (default `docs/phases/*.md`, the coordinator's plan
+in `integrators.reverify_exempt_paths` (none by default; a project whose checks never read
+the plan can list `docs/phases/*.md`, the coordinator's plan
 commits); otherwise it verifies again. Only a verified tree can land: pushes are never
 forced, and a non-fast-forward is rejected by the remote.
 

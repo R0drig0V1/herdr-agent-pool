@@ -126,7 +126,7 @@ per-repository default applies):
 | `protected_branches` | `[]` | extra `fnmatch` patterns only the integrator may push; `main` and `base_branch` are always protected |
 | `worktree_prefix` | `<repo>-` | development worktrees are `../<worktree_prefix><name>` |
 | `coordinator_name` | `coordinator-<repo>` (same rule) | pool mode: the coordinator's herdr name (`scripts/coordinator.sh`) |
-| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
+| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`[]`), `needs_coordinator_ok` (patterns of the paths whose PRs wait for the coordinator's OK: migrations, security and privacy, `CLAUDE.md`, dependency manifests); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
 (`project-config.py base_branch`, `project-config.py integrators.max`) or all of them as JSON
@@ -148,9 +148,16 @@ Limits shared by every agent of every project on the computer, in
 {"heavy_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
 ```
 
-Only `heavy_slots` is enforced: `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr`
-skills run the project's heavy scripts through `resource-budget.py run`, at most that many at
-once. Everything else is negotiated: agents note what they run on the resource board
+Two things are enforced.
+
+- **`heavy_slots`.** `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills run
+  the project's heavy scripts through `resource-budget.py run`, at most that many at once.
+  Each run records its peak memory, which the board shows.
+- **`low_memory_gb`.** `dispatch` and `integrator-pool.sh spawn` start no agent while the
+  available memory is below it (`resource-budget.py memory-check`), unless the user
+  explicitly overrides it.
+
+Everything else is negotiated: agents note what they run on the resource board
 (`resource-board.sh note|clear|show|prune`), send `RESOURCE REQUEST`s to the coordinator,
 which answers `GO`, `WAIT` or `YIELD` and declares save mode when memory is low
 ([docs/multi-integrator.md](docs/multi-integrator.md), "Resources").

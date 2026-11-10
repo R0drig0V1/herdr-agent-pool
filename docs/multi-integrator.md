@@ -384,8 +384,8 @@ memory). That is why the protocol is hub-and-spoke through the coordinator, and 
 asks only for what goes beyond a normal check. The normal check just waits for its slot.
 
 Limits are per machine, in `~/.config/multi-agent-herdr/resources.json`, overriding defaults
-derived from the RAM. Only `heavy_slots` is enforced; the other two are guidelines the board
-shows and the coordinator weighs:
+derived from the RAM. `heavy_slots` is enforced by `run`, and `low_memory_gb` by `memory-check`: no new agent below
+it. `sessions_guideline` is a guideline the board shows and the coordinator weighs:
 
 | RAM | `heavy_slots` (enforced) | `sessions_guideline` | `low_memory_gb` |
 |-----|--------------------------|----------------------|-----------------|
@@ -463,26 +463,37 @@ the codes). It folds in the lessons of the project's integration helper:
 
 It is used in both modes. In single mode it runs in the main worktree on the base branch.
 
-## Open questions (policy, for the user)
+## Decisions (answered by the user, 2026-11-09)
 
-1. **Integrators merge without the coordinator's say.** A green, reviewed PR lands as soon as
-   its integrator is done. The coordinator only learns of it afterwards. Should merges that
-   touch some areas (migrations, security, `CLAUDE.md`) wait for the coordinator or the user?
-2. **The coordinator pushes plan commits to `<base>` directly** (under the merge lock, not
-   through a PR). This matches what the single integrator did before. The alternative, a
-   plan PR verified by the pool, costs a full verification per tick.
-3. **Speculative batching** (verify A+B together) is not implemented, because the machine's
-   memory is the bottleneck. Revisit on a bigger machine or with CI-hosted verification.
-4. **`reverify_exempt_paths` defaults to `docs/phases/*.md`.** A project whose checks read the
-   plan (a docs linter, link checks) must set it to `[]`.
-5. **Scaling is the coordinator's judgment.** The rule of thumb counts every live
-   development agent, idle ones included. Should a hard minimum or maximum ever be
-   automatic, for example spawning `min` when every member died?
-6. **Sessions are a guideline, not a limit.** Only heavy slots are enforced. Should the
-   plugin refuse to start an agent when memory is LOW, instead of the coordinator asking
-   the user?
-7. **Hub-and-spoke negotiation through the coordinator** costs one coordinator turn per
-   request. Integrators could instead settle push priority between themselves directly, at
-   the price of more messages.
-8. **Resource limits are defaults from the RAM, not measurements.** Should the board record
-   the peak memory each heavy command actually used, to replace the agents' estimates?
+The policy questions of the first version, with the answers the user approved:
+
+1. **Sensitive merges wait for the coordinator.** In pool mode, a PR touching
+   `integrators.needs_coordinator_ok` paths waits for the coordinator's OK on its exact head
+   before it merges. By default those paths are migrations, security and privacy paths,
+   `CLAUDE.md`, and the dependency manifests (`pyproject.toml`, `uv.lock`, `package.json`,
+   `package-lock.json`, `Cargo.toml`, `Cargo.lock`).
+   - `integrate-pr.sh` exits 12 and records the wait (`pool-state.py await-ok`).
+   - The queue skips the PR until `pool-state.py approve <N> --head <sha>`.
+   - A new push needs a new OK.
+   - The list is configurable; `[]` turns the gate off.
+2. **The coordinator pushes plan commits directly**, under the merge lock. No change.
+3. **No speculative batching** for now. No change.
+4. **`reverify_exempt_paths` defaults to `[]`**: every change of the base re-verifies,
+   unless a project opts in (for example `["docs/phases/*.md"]`, when no check reads the
+   plan).
+5. **The pool comes back by itself only when every member has died.**
+   `integrator-pool.sh revive`, run on every pass of the coordinator's loop, spawns members
+   1..`min` then. Everything else about scaling stays the coordinator's judgment.
+6. **No new agent while memory is LOW.** `resource-budget.py memory-check` (exit 3 below
+   `low_memory_gb`) is asked by `dispatch` and by `integrator-pool.sh spawn`/`revive` (exit
+   6). The override is the user's explicit say-so (`spawn --allow-low-memory`); another
+   agent's message is not one.
+7. **Hub-and-spoke negotiation** through the coordinator. No change.
+8. **Measured peak memory.** Every `resource-budget.py run` records its command's peak
+   memory, duration and exit code in `history.jsonl`, and the resource board shows the
+   latest ten.
+   - The peak is the largest single process of the command's tree (`ru_maxrss`), a lower
+     bound when several large processes run at once.
+   - It is what to tune `heavy_slots` and `low_memory_gb` against.
+9. **The plugin keeps its id**, `multi-agent-herdr@claude-code-herdr`, in this repository
+   too.

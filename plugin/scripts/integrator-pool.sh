@@ -15,8 +15,13 @@
 #   integrator-pool.sh scale           the facts the coordinator weighs before it spawns or stops a
 #                                      member (live members and their load, the open queue,
 #                                      development agents, the machine), and a suggestion
-#   integrator-pool.sh spawn <n>       create the verify worktree if missing, open its workspace,
-#                                      start the agent and send it its kickoff message
+#   integrator-pool.sh spawn <n> [--allow-low-memory]
+#                                      create the verify worktree if missing, open its workspace,
+#                                      start the agent and send it its kickoff message; refused
+#                                      while memory is LOW (resource-budget.py memory-check)
+#                                      unless the user explicitly passes --allow-low-memory
+#   integrator-pool.sh revive [--allow-low-memory]
+#                                      only when every member has died: spawn members 1..min
 #   integrator-pool.sh stop <n> [--remove-worktree]
 #                                      close the workspace of an idle member that holds no
 #                                      claim; with --remove-worktree also discard its verify
@@ -38,7 +43,8 @@
 #
 # Exit codes: 0 ok; 1 usage, settings, wrong mode or role; 2 herdr or git failed; 3 route: every
 # live integrator is blocked; 4 spawn: the agent waits at a startup dialog (tell the user); 5
-# stop: the member is busy or was not started by this script. Needs git, herdr, jq, python3.
+# stop: the member is busy or was not started by this script; 6 spawn/revive: memory is LOW.
+# Needs git, herdr, jq, python3.
 set -euo pipefail
 
 dir=$(cd "$(dirname "$0")" && pwd)
@@ -142,14 +148,18 @@ ensure_worktree() {  # ensure_worktree <path>: a detached verify worktree at ori
     fi
 }
 
-cmd_spawn() {
+cmd_spawn() {  # cmd_spawn <n> [--allow-low-memory]
     need_pool; may_act
-    local n="$1" name wt out ws pane prompt_file coordinator rc kickoff args
+    local n="$1" name wt out ws pane prompt_file coordinator rc kickoff args memory
     valid_n "$n"
     name=$(member_name "$n"); wt=$(member_worktree "$n")
     if [[ -n "$(status_of "$name")" ]]; then echo "$name is already running"; return 0; fi
     herdr agent list | jq -e --arg n "$name" '.result.agents[] | select(.name == $n)' >/dev/null \
         && die "the herdr name $name is held by an agent outside this repository's verify worktrees" 2
+    if [[ "${2:-}" != --allow-low-memory ]]; then
+        # An agent started on a machine that is out of memory can take every other one down.
+        memory=$("$dir/resource-budget.py" memory-check) || die "not starting $name: $memory (override: spawn $n --allow-low-memory, only on the user's explicit say-so)" 6
+    fi
     ensure_worktree "$wt"
     out=$(herdr workspace create --cwd "$wt" --label "$name" --no-focus \
         --env CLAUDE_ROLE=integrator --env "MULTI_AGENT_HERDR_NAME=$name") || die "herdr workspace create failed" 2
@@ -205,6 +215,18 @@ cmd_stop() {
     fi
 }
 
+cmd_revive() {  # cmd_revive [--allow-low-memory]: members 1..min, only when none is alive
+    need_pool; may_act
+    local live n
+    live=$(live_members | grep -c . || true)
+    if [[ $live -gt 0 ]]; then
+        echo "$live live member(s): nothing to revive"
+        return 0
+    fi
+    echo "every pool member is down: spawning 1..$(cfg .integrators.min)"
+    for ((n = 1; n <= $(cfg .integrators.min); n++)); do cmd_spawn "$n" "${1:-}"; done
+}
+
 cmd_scale() {
     need_pool
     local want dev live n name status idle limit queue claims note
@@ -230,8 +252,11 @@ case "${1:-}" in
     route) cmd_route ;;
     desired) need_pool; read -r want dev live <<<"$(desired)"; echo "desired=$want development_agents=$dev live=$live" ;;
     scale) cmd_scale ;;
-    spawn) [[ $# == 2 ]] || die "usage: integrator-pool.sh spawn <n>"; cmd_spawn "$2" ;;
+    spawn) [[ $# == 2 || ( $# == 3 && "$3" == --allow-low-memory ) ]] \
+               || die "usage: integrator-pool.sh spawn <n> [--allow-low-memory]"; cmd_spawn "$2" "${3:-}" ;;
+    revive) [[ $# == 1 || ( $# == 2 && "$2" == --allow-low-memory ) ]] \
+                || die "usage: integrator-pool.sh revive [--allow-low-memory]"; cmd_revive "${2:-}" ;;
     stop) [[ $# == 2 || ( $# == 3 && "$3" == --remove-worktree ) ]] \
               || die "usage: integrator-pool.sh stop <n> [--remove-worktree]"; cmd_stop "$2" "${3:-}" ;;
-    *) sed -n '10,22p' "$0" >&2; exit 1 ;;
+    *) sed -n '/^# Usage:/,/^# Scaling is/p' "$0" | sed '$d' >&2; exit 1 ;;
 esac

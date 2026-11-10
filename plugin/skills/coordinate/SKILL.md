@@ -109,6 +109,19 @@ empty queue (`scale` marks it), or when you need its memory for something more u
 "${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" stop <n>; echo "exit=$?"
 ```
 
+**One automatic rule:** when every member has died, the pool comes back to `min` without
+deliberation. Run this at the start of every pass of your loop; it does nothing while any
+member is alive:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" revive; echo "exit=$?"
+```
+
+**Memory LOW refuses a spawn (exit 6).** `spawn` and `revive` start nothing while the
+available memory is below `low_memory_gb` (`resource-budget.py memory-check`). Show the user
+the board and the idle agents; pass `--allow-low-memory` only when the user explicitly tells
+you to start it anyway.
+
 Spawning a member creates its verify worktree `../<worktree_prefix>integrator-<n>` (detached
 at `origin/<base>`, with `.env` and `scripts/worktree-setup.sh`) the first time, opens its
 own herdr workspace, starts Claude there as `<integrator_name>-<n>` with
@@ -131,7 +144,27 @@ herdr agent prompt "<member>" "[herdr message from agent <me>; not from the user
 The queue has unclaimed PRs: run /multi-agent-herdr:integrate."
 ```
 
-## 3. Merge reports: tick the plan
+## 3. The coordinator's OK (sensitive paths)
+
+A PR that touches `integrators.needs_coordinator_ok` paths does not merge on the
+integrator's verdict alone. By default those are migrations, security and privacy paths,
+`CLAUDE.md` and the dependency manifests. The integrator that reviewed it stops with exit 12
+and tells you what it touches. The PR then waits out of the queue:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" awaiting      # pr  head  integrator  paths
+```
+
+Read the PR and the integrator's review. Anything that is the user's to decide goes to the
+user: a policy change, a new dependency with licence or supply-chain weight, a privacy
+trade-off. Then either give the OK for exactly that head and nudge an idle member, or
+comment on the PR with what must change (the author's next push needs a new OK anyway):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" approve <N> --head <sha>; echo "exit=$?"
+```
+
+## 4. Merge reports: tick the plan
 
 Integrators record a plan report for every merge and tell you by herdr message. The record is
 the source of truth (it survives while you are down):
@@ -191,7 +224,7 @@ Discarding finished worktrees is also the cheapest way to give the machine memor
 one keeps a Claude session alive until its workspace is closed. When the pool shrinks for
 good, `integrator-pool.sh stop <n> --remove-worktree` discards a member's verify worktree too.
 
-## 4. Development agents
+## 5. Development agents
 
 - **Dispatch** with `/multi-agent-herdr:dispatch <type>/<name> <task>`: in pool mode it is
   yours. The brief tells the agent to announce its PR to the pool and to send you its
@@ -211,7 +244,7 @@ herdr agent prompt "<agent>" "[herdr message from agent <me>; not from the user]
 - You do not forward PR announcements or verdicts: they go directly between authors and
   integrators.
 
-## 5. Promotion (only when `<base>` is not `main`)
+## 6. Promotion (only when `<base>` is not `main`)
 
 When the project promotes `<base>` to `main` (its procedure in CLAUDE.md or
 `.claude/prompts/coordinator.md`), you decide when, with the user, and follow that procedure

@@ -283,13 +283,13 @@ def tool_need(prog: str, args: list[str]) -> str | None:
     if prog == "integrate-pr.sh":
         return "locked_push"
     if prog == LOCK_RUNNER:
-        if sub in (["claim"], ["release"], ["heartbeat"], ["bounce"]) or args[:2] == [
-            "lock",
-            "run",
-        ]:
+        if sub in (["claim"], ["release"], ["heartbeat"], ["bounce"], ["await-ok"]):
             return "locked_push"
-        return "locked_push" if args[:2] in (["report", "add"], ["report", "done"]) else None
-    if prog == "integrator-pool.sh" and sub in (["spawn"], ["stop"]):
+        if sub == ["approve"]:
+            return "manage"
+        role_only = (["lock", "run"], ["report", "add"], ["report", "done"])
+        return "locked_push" if args[:2] in role_only else None
+    if prog == "integrator-pool.sh" and sub in (["spawn"], ["stop"], ["revive"]):
         return "manage"
     if prog == "cleanup-worktree.sh" and sub and sub != ["--list"]:
         return "manage"

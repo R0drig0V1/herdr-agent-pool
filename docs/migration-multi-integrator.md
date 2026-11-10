@@ -82,10 +82,13 @@ the project as the example. The plugin does not edit the project; the project's 
       ```
 
       The names become `coordinator-the project` and `integrator-the project-1` .. `-3`.
-      **the project must also set `"reverify_exempt_paths": []`** inside `integrators`:
+      Keep `reverify_exempt_paths` at its default, `[]`:
       `tests/server/test_traceability.py` reads `docs/phases/phase-3-features.md`, so a plan
       commit can change the result of the checks. Every merge after a plan commit then
       verifies again; that is the price of a check that reads the plan.
+      Check `needs_coordinator_ok` against the project's layout. The default patterns catch
+      `*migrations/*`, `*security*`, `*privacy*`, `CLAUDE.md` and the manifests; add the
+      privacy-rule paths of the project's ADRs if they live elsewhere.
 - [ ] `scripts/integrator.sh`: replace it with the plugin's `template/scripts/integrator.sh`.
       the project's copy predates the SessionStart claim, and the new one refuses to launch in
       pool mode.

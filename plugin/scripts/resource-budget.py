@@ -20,9 +20,11 @@ Limits, machine-wide, from `~/.config/multi-agent-herdr/resources.json` (or the 
 
     {"heavy_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
 
-Only `heavy_slots` is enforced; the other two are the guidelines the resource board shows and
-the coordinator weighs (live sessions for this RAM; the free memory below which it declares
-save mode). Defaults from the machine's RAM (R GB): heavy_slots = max(1, (R - 8) // 8),
+`heavy_slots` is enforced by `run`, `low_memory_gb` by `memory-check` (no new agent below
+it); `sessions_guideline` is a guideline the resource board shows and the coordinator
+weighs. Below `low_memory_gb` the coordinator also declares save mode.
+
+Defaults from the machine's RAM (R GB): heavy_slots = max(1, (R - 8) // 8),
 sessions_guideline = max(2, R // 2), low_memory_gb = R / 10; a 24 GB machine gets 2, 12 and
 2.4. `$MULTI_AGENT_HERDR_HEAVY_SLOTS` overrides heavy_slots. Slot state lives in
 `~/.cache/multi-agent-herdr/resources` (or `$MULTI_AGENT_HERDR_RESOURCES_DIR`), not in a
@@ -33,9 +35,17 @@ Usage:
 
     resource-budget.py run [--label TEXT] [--timeout S] -- CMD [ARG...]
     resource-budget.py limits                   effective limits as JSON
+    resource-budget.py memory-check             exit 3 when memory is LOW (see below)
 
-Exit codes: 0 ok; 1 usage or invalid config; 124 `run` got no slot within --timeout;
-otherwise CMD's own exit code. Python 3.9 compatible, no dependencies.
+`memory-check` is the one session rule that is enforced: `dispatch` and
+`integrator-pool.sh spawn` refuse to start an agent while the available memory is below
+`low_memory_gb`, unless the user explicitly overrides it (`spawn --allow-low-memory`; for
+`dispatch`, the user's say-so). Every `run` also records its command's peak memory, exit
+code and duration in `history.jsonl` (the latest 200), which the resource board shows.
+
+Exit codes: 0 ok; 1 usage or invalid config; 3 `memory-check`: memory is LOW; 124 `run` got
+no slot within --timeout; otherwise CMD's own exit code. Python 3.9 compatible, no
+dependencies.
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ import fcntl
 import json
 import os
 import platform
+import resource
 import subprocess
 import sys
 import time
@@ -53,6 +64,7 @@ from typing import Any
 
 GB = 1024**3
 EXIT_TIMEOUT = 124
+EXIT_LOW = 3
 KEYS = ("heavy_slots", "sessions_guideline", "low_memory_gb")
 
 
@@ -69,6 +81,67 @@ def total_gb() -> float:
     except (OSError, ValueError):
         pass
     return 8.0
+
+
+def available_gb() -> float | None:
+    """Memory available to new processes in GB, or None when it cannot be read."""
+    try:
+        if platform.system() == "Darwin":
+            out = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
+            page = int(out.split("page size of ")[1].split()[0])
+            free = 0
+            for line in out.splitlines()[1:]:
+                key, _, value = line.partition(":")
+                if key.strip() in ("Pages free", "Pages inactive", "Pages speculative"):
+                    free += int(value.strip().rstrip("."))
+            return free * page / GB
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024 / GB
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def memory_check(lim: dict[str, Any]) -> int:
+    """Exit 0 when a new agent may start, 3 when memory is LOW (below low_memory_gb)."""
+    free, floor = available_gb(), float(lim["low_memory_gb"])
+    if free is None:
+        print("memory: unknown (could not read it); not refusing")
+        return 0
+    if free < floor:
+        print(f"memory is LOW: {free:.1f} GB available, below the floor of {floor:g} GB "
+              f"({lim['source']}). Close idle agents (resource-board.sh show) before starting "
+              "another one; start it anyway only if the user explicitly says so.")  # fmt: skip
+        return EXIT_LOW
+    print(f"memory: ok, {free:.1f} GB available (floor {floor:g} GB)")
+    return 0
+
+
+HISTORY_KEEP = 200
+
+
+def record_peak(owner: dict[str, Any], code: int, seconds: float) -> None:
+    """Append the heavy command's peak memory to history.jsonl (the board shows the latest).
+
+    The peak is `ru_maxrss` over the waited-for children: the largest single process of the
+    command's tree (a lower bound for a tree of several large processes). Never raises.
+    """
+    try:
+        peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+        peak_mb = peak / 1024**2 if platform.system() == "Darwin" else peak / 1024
+        entry = {**owner, "exit": code, "seconds": round(seconds, 1), "peak_mb": round(peak_mb)}
+        path = os.path.join(state_dir(), "history.jsonl")
+        with open(path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        with open(path) as f:
+            lines = f.readlines()
+        if len(lines) > 2 * HISTORY_KEEP:
+            with open(path, "w") as f:
+                f.writelines(lines[-HISTORY_KEEP:])
+    except (OSError, ValueError):
+        pass
 
 
 def config_path() -> str:
@@ -185,7 +258,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         with open(owner_file, "w") as f:
             json.dump(owner, f)
-        return subprocess.call(command, env=dict(os.environ, MULTI_AGENT_HERDR_SLOT=str(slot)))
+        started = time.monotonic()
+        code = subprocess.call(command, env=dict(os.environ, MULTI_AGENT_HERDR_SLOT=str(slot)))
+        record_peak(owner, code, time.monotonic() - started)
+        return code
     finally:
         with contextlib.suppress(OSError):
             os.remove(owner_file)
@@ -196,6 +272,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("limits")
+    sub.add_parser("memory-check")
     run = sub.add_parser("run")
     run.add_argument("--label", default="")
     run.add_argument("--timeout", type=float, default=0, help="seconds to wait; 0 = no limit")
@@ -208,6 +285,8 @@ def main() -> int:
         return 1
     if args.cmd == "run":
         return cmd_run(args)
+    if args.cmd == "memory-check":
+        return memory_check(lim)
     print(json.dumps(lim, indent=2))
     return 0
 

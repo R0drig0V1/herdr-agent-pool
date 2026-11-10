@@ -113,7 +113,9 @@ agents
 # The resource budget's state and limits, private to the tests (never ~/.cache or ~/.config).
 export MULTI_AGENT_HERDR_RESOURCES_DIR="$work/resources" MULTI_AGENT_HERDR_RESOURCES_CONFIG="$work/resources.json"
 export MULTI_AGENT_HERDR_MISSING_GRACE=0   # an owner missing from herdr is dead at once (one test sets a grace)
-budget() { printf '{"heavy_slots": 1, "sessions_guideline": %s, "low_memory_gb": 0}\n' "$1" > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"; }
+budget() {  # budget <sessions guideline> [low memory floor in GB]
+    printf '{"heavy_slots": 1, "sessions_guideline": %s, "low_memory_gb": %s}\n' "$1" "${2:-0}" > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
+}
 budget 50
 
 # A project in pool mode, with a bare origin --------------------------------------------------
@@ -123,7 +125,7 @@ git init --quiet -b main "$proj"
 mkdir -p "$proj/.claude/prompts" "$proj/scripts" "$proj/docs/decisions" "$proj/docs/phases" "$proj/src"
 cp "$root/template/.claude/settings.json" "$proj/.claude/settings.json"
 cat > "$proj/.claude/multi-agent-herdr.json" <<'JSON'
-{"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2}}
+{"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2, "reverify_exempt_paths": ["docs/phases/*.md"]}}
 JSON
 echo "stance" > "$proj/.claude/prompts/integrator.md"
 cat > "$proj/scripts/check.sh" <<'SH'
@@ -161,6 +163,11 @@ check "project-config: pool mode"                [ "$(cd "$proj" && "$pc" mode)"
 check "project-config: pool names"               [ "$(cd "$proj" && "$pc" integrator_pool | tr '\n' ' ')" == "integrator-proj-1 integrator-proj-2 " ]
 check "project-config: coordinator default name" [ "$(cd "$proj" && "$pc" coordinator_name)" == coordinator-proj ]
 check "project-config: dotted key and defaults"  [ "$(cd "$proj" && "$pc" integrators.claim_ttl_minutes)" == 60 ]
+echo '{"integrators": {}}' > "$work/defaults.json"
+check "project-config: re-verify everything by default (no exempt paths)" \
+    bash -c 'mkdir -p "$1/.claude" && cp "$2" "$1/.claude/multi-agent-herdr.json" && [[ "$("$3" --root "$1" integrators.reverify_exempt_paths)" == "" ]]' _ "$work/defaults" "$work/defaults.json" "$pc"
+check "project-config: sensitive paths wait for the coordinator by default" \
+    bash -c 'out=$("$1" --root "$2" integrators.needs_coordinator_ok); [[ "$out" == *"*migrations/*"* && "$out" == *"*CLAUDE.md"* && "$out" == *"*uv.lock"* && "$out" == *"*Cargo.lock"* ]]' _ "$pc" "$work/defaults"
 long="$work/a-very-long-repository-name-that-overflows"; git init --quiet -b main "$long"; mkdir -p "$long/.claude"
 echo '{"integrators": {"max": 12}}' > "$long/.claude/multi-agent-herdr.json"
 names=$("$pc" --root "$long" integrator_pool)
@@ -238,6 +245,12 @@ for probe in "env -u FOO CLAUDE_ROLE=integrator $ipr 3" \
     expect 2 "guard: blocks '$probe'" "$g" "$(bash_cmd "$probe" "$d1")"
 done
 expect 0 "guard: env -u alone is fine"                  "$g" "$(bash_cmd 'env -u FOO ls' "$d1")"
+expect 2 "guard: a developer gives the coordinator's OK"   "$g" "$(bash_cmd "$ps approve 3 --head abc" "$d1")"
+CLAUDE_ROLE=integrator  expect 2 "guard: an integrator gives the coordinator's OK" "$g" "$(bash_cmd "$ps approve 3 --head abc" "$wt1")"
+CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator gives its OK"             "$g" "$(bash_cmd "$ps approve 3 --head abc" "$proj")"
+CLAUDE_ROLE=integrator  expect 0 "guard: an integrator records a wait for the OK"  "$g" "$(bash_cmd "$ps await-ok 3 --head abc --owner i" "$wt1")"
+expect 2 "guard: a developer revives the pool"           "$g" "$(bash_cmd "$scripts/integrator-pool.sh revive" "$d1")"
+CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator revives the pool"         "$g" "$(bash_cmd "$scripts/integrator-pool.sh revive" "$proj")"
 for probe in "HERDR_PANE_ID=w1:p1 $ps claim 3 --owner x" "env HERDR_TAB_ID=w1:t1 ls" \
              "export HERDR_WORKSPACE_ID=w1" "env -u A HERDR_SOCKET_PATH=/tmp/s ls" "HERDR_BIN_PATH=/x ls"; do
     expect 2 "guard: blocks '$probe'" "$g" "$(bash_cmd "$probe" "$d1")"
@@ -606,6 +619,29 @@ integrate 11
 check "integrate-pr: code moved into an exempt path still re-verifies" \
     bash -c '[[ $1 == 0 && "$2" == *"re-verifying"* && $3 == 2 ]]' _ "$rc" "$out" "$(runs 11)"
 
+# The coordinator's OK: a PR touching a dependency manifest waits for it (integrators.needs_coordinator_ok).
+make_pr 12 feat/deps pyproject.toml "[project]"
+head12=$(git -C "$origin" rev-parse refs/heads/feat/deps)
+agents "$me" w2:p1 idle "$wt1"  coordinator-proj w1:p1 idle "$proj"
+integrate 12
+check "integrate-pr: a manifest change waits for the coordinator's OK (exit 12)" \
+    bash -c '[[ $1 == 12 && "$2" == *"needs-coordinator-ok"*"pyproject.toml"* ]]' _ "$rc" "$out"
+check "integrate-pr: nothing merged while waiting" not on_main pyproject.toml
+check "pool-state: awaiting lists it with its paths" \
+    [ "$(cd "$proj" && "$ps" awaiting | cut -f1,4)" == "12	pyproject.toml" ]
+jq -n --arg h "$head12" '[{number: 12, title: "deps", headRefName: "feat/deps", headRefOid: $h, isDraft: false, createdAt: "2026-02-01"}]' > "$FAKE_GH/list.json"
+check "pool-state: the queue skips a PR waiting for the OK" [ -z "$(cd "$proj" && "$ps" queue --base main)" ]
+check "pool-state: an integrator cannot give the OK (exit 4)" \
+    exits 4 bash -c 'cd "$1" && HERDR_ENV=1 HERDR_PANE_ID=w2:p1 "$2" approve 12 --head "$3"' _ "$proj" "$ps" "$head12"
+check "pool-state: the coordinator gives the OK for that head" \
+    bash -c 'cd "$1" && HERDR_ENV=1 HERDR_PANE_ID=w1:p1 "$2" approve 12 --head "$3" >/dev/null' _ "$proj" "$ps" "$head12"
+check "pool-state: an OK is for one head only" not bash -c 'cd "$1" && "$2" approved 12 --head 0000' _ "$proj" "$ps"
+check "pool-state: approved, the PR is back in the queue" [ "$(cd "$proj" && "$ps" queue --base main | cut -f1)" == 12 ]
+echo '[]' > "$FAKE_GH/list.json"
+integrate 12
+check "integrate-pr: with the OK it merges" bash -c '[[ $1 == 0 ]] && git -C "$2" cat-file -e main:pyproject.toml' _ "$rc" "$origin"
+agents "$me" w2:p1 idle "$wt1"
+
 # Single mode: the integrator in the main worktree.
 sorigin="$work/single-origin.git"; git init --quiet --bare -b main "$sorigin"
 git -C "$single" remote add origin "$sorigin" && git -C "$single" push --quiet -u origin main
@@ -655,6 +691,15 @@ check "resource-board: prune drops gone agents, keeps live ones and humans' line
 check "resource-board: clear removes your own line" not test -e "$MULTI_AGENT_HERDR_RESOURCES_DIR/board/a1.json"
 check "resource-board: refuses a name that is not a file name" exits 1 "$board" note x --as "../etc"
 check "resource-board: refuses a non-numeric estimate" exits 1 "$board" note x --gb lots --as a2
+budget 50 100000
+check "resource-budget: memory-check refuses below low_memory_gb (exit 3)" exits 3 "$rb" memory-check
+budget 50 0
+check "resource-budget: memory-check passes above it" "$rb" memory-check
+"$rb" run --label peak-test -- python3 -c "b = bytearray(60 * 1024 * 1024)" >/dev/null 2>&1
+check "resource-budget: a heavy command's peak memory is recorded" \
+    bash -c 'tail -1 "$1/history.jsonl" | jq -e ".label == \"peak-test\" and .peak_mb >= 50 and .exit == 0" >/dev/null' _ "$MULTI_AGENT_HERDR_RESOURCES_DIR"
+check "resource-board: shows the recent heavy commands' peak memory" \
+    bash -c '[[ "$("$1" show)" == *"| peak-test | ? | "* ]]' _ "$board"
 budget 4
 check "resource-board: within the guideline, no flag" bash -c '[[ "$("$1" show)" != *"over the guideline"* ]]' _ "$board"
 echo '{"heavy_slots": 0}' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
@@ -712,6 +757,21 @@ agents integrator-proj-2 w9:p1 idle "$wt2"   # member 1 is down
 (cd "$proj" && env HERDR_ENV=1 FAKE_START_RC=1 "$pool" spawn 1 >/dev/null 2>&1); status=$?
 check "pool spawn: a startup dialog is escalated (exit 4), never answered" \
     bash -c '[[ $1 == 4 ]] && ! grep -q "send-keys" "$2"' _ "$status" "$FAKE_LOG"
+budget 50 100000; : > "$FAKE_LOG"
+out=$(cd "$proj" && env HERDR_ENV=1 "$pool" spawn 1 2>&1); status=$?
+check "pool spawn: refused while memory is LOW (exit 6), nothing started" \
+    bash -c '[[ $1 == 6 && "$2" == *"memory is LOW"*"--allow-low-memory"* && ! -s "$3" ]]' _ "$status" "$out" "$FAKE_LOG"
+(cd "$proj" && env HERDR_ENV=1 "$pool" spawn 1 --allow-low-memory >/dev/null 2>&1); status=$?
+check "pool spawn: --allow-low-memory is the user's override" \
+    bash -c '[[ $1 == 0 ]] && grep -q "agent-start integrator-proj-1" "$2"' _ "$status" "$FAKE_LOG"
+budget 50
+: > "$FAKE_LOG"
+(cd "$proj" && env HERDR_ENV=1 "$pool" revive >/dev/null 2>&1); status=$?
+check "pool revive: does nothing while a member is alive" bash -c '[[ $1 == 0 && ! -s "$2" ]]' _ "$status" "$FAKE_LOG"
+agents   # every member is down
+(cd "$proj" && env HERDR_ENV=1 "$pool" revive >/dev/null 2>&1); status=$?
+check "pool revive: brings back the min when every member died" \
+    bash -c '[[ $1 == 0 ]] && grep -q "agent-start integrator-proj-1" "$2" && ! grep -q "agent-start integrator-proj-2" "$2"' _ "$status" "$FAKE_LOG"
 
 agents integrator-proj-2 w9:p1 idle "$wt2"  integrator-proj-1 w2:p1 idle "$wt1"
 (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w9:p1 HERDR_PANE_ID=w9:p1 "$ps" claim 77 --owner integrator-proj-2 >/dev/null)

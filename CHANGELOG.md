@@ -8,6 +8,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Policy answers approved by the user (docs/multi-integrator.md, "Decisions"):
+  - in pool mode, a PR touching `integrators.needs_coordinator_ok` paths waits for the
+    coordinator's OK on its exact head. The default paths are migrations, security and
+    privacy paths, `CLAUDE.md` and the dependency manifests. `integrate-pr.sh` exits 12, and
+    `pool-state.py` gains `await-ok`, `approve`, `approved` and `awaiting`;
+  - `integrator-pool.sh revive` respawns members 1..min only when every member has died;
+  - `resource-budget.py memory-check`: `dispatch` and `integrator-pool.sh spawn`/`revive`
+    refuse to start an agent while memory is below `low_memory_gb`. The user's explicit
+    override is `--allow-low-memory`;
+  - every heavy command's peak memory, duration and exit code is recorded
+    (`history.jsonl`) and shown on the resource board.
+
+### Changed
+- `integrators.reverify_exempt_paths` defaults to `[]`: every change of the base
+  re-verifies unless a project opts in.
+
 ## [0.2.0] - 2026-11-09
 
 This release moved to its own repository,

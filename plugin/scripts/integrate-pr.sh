@@ -31,7 +31,7 @@
 #  4. Commit the merge, then push it under the merge lock (pool-state.py lock run). Inside the
 #     lock, when origin/<base> moved since the verification started, the PR is merged again
 #     onto the new base; if the new merged tree differs from the verified one only in
-#     `integrators.reverify_exempt_paths` (default docs/phases/*.md; compared with
+#     `integrators.reverify_exempt_paths` (default none; compared with
 #     --no-renames, so moving code into an exempt path is a change), it is pushed at once,
 #     otherwise the lock is released and the new tree is verified again, up to
 #     `integrators.max_reverify` times (exit 7 after that). The push is never forced: a
@@ -51,7 +51,8 @@
 # (bounce); 5 commit failed; 6 push failed or timed out; 7 the base kept moving; 8 merge lock
 # not acquired; 9 nothing to merge (the head is already in the base); 10 the claim changed hands
 # (nothing pushed); 11 herdr stopped confirming this pane's identity under the lock (nothing
-# pushed). On 5-9 the claim is released and the worktree reset: the PR goes back to
+# pushed); 12 the PR touches `integrators.needs_coordinator_ok` paths and waits for the
+# coordinator's OK (pool mode; claim released, nothing merged). On 5-9 the claim is released and the worktree reset: the PR goes back to
 # the queue without a bounce. Needs git, gh, jq, python3 and (inside herdr) herdr.
 set -uo pipefail
 
@@ -129,7 +130,8 @@ config=$("$pc") || exit 1
 mode=$(jq -r .mode <<<"$config")
 base=$(jq -r .base_branch <<<"$config")
 max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
-exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
+exempt=$(jq -c '.integrators.reverify_exempt_paths // []' <<<"$config")
+gate=$(jq -c '.integrators.needs_coordinator_ok // []' <<<"$config")
 if [[ "$mode" == pool ]]; then me="${MULTI_AGENT_HERDR_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
 [[ -n "$me" ]] || { echo "pool mode: MULTI_AGENT_HERDR_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
@@ -195,6 +197,21 @@ requeue() {  # requeue <outcome> <exit code> <reason>: reset, back to the queue,
     fi
     result "$1" "PR #$N" "$3"; exit "$2"
 }
+
+# The coordinator's OK (pool mode): a PR touching integrators.needs_coordinator_ok paths
+# (migrations, security, CLAUDE.md, dependency manifests...) merges only once the coordinator
+# approved exactly this head. Until then it waits, out of the queue, with its claim released.
+if [[ "$mode" == pool && "$gate" != "[]" ]]; then
+    gated=$(git diff --no-renames --name-only "origin/$base...$head" | python3 -c 'import fnmatch, json, sys
+pats = json.loads(sys.argv[1])
+print("\n".join(p for p in sys.stdin.read().splitlines() if p and any(fnmatch.fnmatchcase(p, q) for q in pats)))' "$gate")
+    if [[ -n "$gated" ]] && ! "$ps" approved "$N" --head "$head"; then
+        "$ps" await-ok "$N" --head "$head" --owner "$me" --paths "${gated//$'\n'/ }" >/dev/null \
+            || echo "warning: could not record that PR #$N waits for the OK (pool-state.py await-ok failed)" >&2
+        result needs-coordinator-ok "PR #$N touches ${gated//$'\n'/, }: it waits for the coordinator's OK (pool-state.py approve $N --head $head)"
+        exit 12
+    fi
+fi
 
 # 2. Start from origin/<base> and merge.
 if [[ "$mode" == pool ]]; then
