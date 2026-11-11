@@ -37,13 +37,20 @@ Settings (`.claude/multi-agent-herdr.json`, read only by `project-config.py`):
     "scale_down_idle_minutes": 30,
     "claim_ttl_minutes": 60,
     "max_reverify": 3,
-    "reverify_exempt_paths": ["docs/phases/*.md"]
+    "reverify_exempt_paths": ["docs/phases/*.md"],
+    "locked_reverify_minutes": 60,
+    "nudge_after_minutes": 5
+  },
+  "numbered_files": {
+    "adr": "docs/decisions/(\\d{4})-.*\\.md",
+    "migration": "src/app/migrations/(\\d{4})_.*\\.sql"
   }
 }
 ```
 
 The `integrators` object turns pool mode on; every key in it is optional (the values above
-are the defaults).
+are the defaults). `numbered_files` (default `{}`, both modes) names the numbered files that
+parallel branches must not number alike; see "Numbered files" below.
 
 A `verify` object, in either mode, shapes the merge verification: `check_env` adds variables
 to `scripts/check.sh`'s environment on every merge verification (for example
@@ -166,9 +173,26 @@ and a clear "base moved" signal, and keeps two integrators from re-merging at th
 3. Compare the new merged tree with the verified one (`git diff --name-only`). When every
    difference matches `reverify_exempt_paths` (default `docs/phases/*.md`, compared with `--no-renames`: the coordinator's
    plan commits, which cannot change the result of the checks), commit and push at once.
+   Likewise when the project has a `scripts/reverify-needed.sh` and it says the change cannot
+   affect this PR's checks (below).
 4. Otherwise release the lock and verify the new tree, then go back to 1; after
    `max_reverify` re-verifications, give the PR back to the queue (claim released, no
-   bounce; exit 7).
+   bounce; exit 7). The **last** of those re-verifications runs inside the merge lock
+   (`locked_reverify_minutes`, default 60, then it is killed; 0 turns this off): the base
+   cannot move under it, so a long verification cannot starve. Other integrators wait for the
+   lock meanwhile (up to 900 s, then their PR goes back to the queue without a bounce).
+
+**`scripts/reverify-needed.sh`** (optional, the project's): `reverify-needed.sh <verified
+base> <new base> <PR head>`, with the paths that differ between the verified tree and the new
+merged tree on stdin, one per line. Only exit 0 with `no-reverify` as the last line of its
+output means the new base cannot affect this PR's checks: push without verifying again.
+Anything else (another line, another exit code, a crash, no answer within 120 s) verifies
+again, so a broken hook fails closed. Its last output lines go to the integrator's log. It
+runs under the merge lock in the verify worktree (the new merged tree is checked out), and it
+is read from the **new base** commit, so a PR cannot change the rule for its own merge. Keep it
+fast and conservative: a wrong "1" lets a semantic conflict land. A project that selects its
+tests by path (a check scope) can answer from the intersection of the changed paths with the
+PR's scope.
 
 This is the merge-queue rule ("the tree that lands is the tree that was tested"), applied
 per PR. Trade-offs of the policies considered:
@@ -192,6 +216,39 @@ depend on a failed one, and N times the machine resources at once. On one laptop
 resource budget, not the integrator count, is the limit (see below), so speculative runs
 would mostly wait for heavy slots. Per-PR verification with re-verification on collision is
 simpler and fails more legibly. Revisit on a machine with spare capacity: open question 3.
+
+## Numbered files
+
+Two parallel branches that each add "the next" migration or ADR pick the same number. With
+`numbered_files` set (`{kind: regex}`; the regex matches a whole path and captures the number
+in its one group), the dispatcher reserves the number when it dispatches the task and writes
+it in the brief:
+
+```bash
+pool-state.py reserve <kind> --owner <branch>     # prints e.g. 0037
+pool-state.py reservations                        # kind  number  owner  age-s
+pool-state.py unreserve --owner <branch> [--kind K] [--number N]
+```
+
+The number is one above every number on `origin/<base>`, in an open PR's head (fetched) and
+already reserved, zero-padded like the existing files. When `origin/<base>` cannot be fetched
+or the open PRs cannot be listed, `reserve` hands out nothing (exit 1): a number computed from
+stale trees could collide. A reservation ends when its number
+lands on `origin/<base>` (the next `reserve` prunes it), when `integrate-pr.sh` merges its
+branch, or with `unreserve`. Reservations are cooperative: no identity check, any session may
+reserve (the development agent itself, when it needs another number).
+
+## Lost announcements: the pool watcher
+
+An announcement goes to one member (`route`: the first idle one). Authors that announce to a
+busy member by name, or a message lost while a member was blocked, leave PRs unclaimed while
+another member idles. `integrator-pool.sh watch` (started by the coordinator in the
+background; no Claude tokens) runs `nudge` every minute: when an open PR has waited unclaimed
+for `integrators.nudge_after_minutes` (default 5; 0 turns it off), it prompts idle members that
+hold no claim, one per waiting PR, each at most once per that interval. A PR still unclaimed
+after 3 nudges is left to the coordinator, told once (a member may be declining it for a
+reason the watcher cannot see). A second `watch` for
+the same repository exits at once (a kernel `flock`), so the coordinator restarts it safely.
 
 ## Who owns the plan
 

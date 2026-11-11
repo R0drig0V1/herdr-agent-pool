@@ -88,6 +88,18 @@ through `integrator-pool.sh stop`.
 
 ## 2. The pool: scale by asking
 
+**The pool watcher.** Start it once when you start (Bash with `run_in_background`; a second
+start exits at once, so restarting is safe):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" watch
+```
+
+It spends no Claude tokens: every minute it prompts an idle member (without a claim) when an
+open PR has waited unclaimed for `integrators.nudge_after_minutes`, each member at most once per
+that interval. It covers lost announcements and authors that announce to a busy member. If it
+stops (it dies with your session), start it again.
+
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" list
 "${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" scale

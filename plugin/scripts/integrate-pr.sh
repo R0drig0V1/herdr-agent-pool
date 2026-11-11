@@ -32,9 +32,12 @@
 #     lock, when origin/<base> moved since the verification started, the PR is merged again
 #     onto the new base; if the new merged tree differs from the verified one only in
 #     `integrators.reverify_exempt_paths` (default docs/phases/*.md; compared with
-#     --no-renames, so moving code into an exempt path is a change), it is pushed at once,
-#     otherwise the lock is released and the new tree is verified again, up to
-#     `integrators.max_reverify` times (exit 7 after that). The push is never forced: a
+#     --no-renames, so moving code into an exempt path is a change), or when the project's
+#     scripts/reverify-needed.sh (read from the new base) says the change cannot affect this
+#     PR's checks, it is pushed at once; otherwise the lock is released and the new tree is
+#     verified again, up to `integrators.max_reverify` times (exit 7 after that). The last of
+#     those runs holds the merge lock (`integrators.locked_reverify_minutes`, 0: off), so the
+#     base cannot move under it and a long verification cannot starve. The push is never forced: a
 #     non-fast-forward is rejected by the remote, so only a verified tree can land (a rejected
 #     push is merged again and re-verified). Pool mode: the claim is re-checked under the lock
 #     right before the push (exit 10 if it changed hands), and the locked part is killed after
@@ -74,18 +77,60 @@ if [[ "${1:-}" == --push-under-lock ]]; then
             fail 3 "the PR no longer merges cleanly onto $1"
         fi
     }
+    # The project's scripts/reverify-needed.sh <verified base> <new base> <PR head>, taken from
+    # the new base (a PR cannot change the rule for its own merge), with the changed paths on
+    # stdin. Only exit 0 with `no-reverify` as the last line of its output skips the
+    # re-verification (fail closed: a crash, any other answer, or none within 120 s verifies).
+    reverify_skipped() {  # reverify_skipped <new base> <changed paths>
+        local hook rc
+        git cat-file -e "$1:scripts/reverify-needed.sh" 2>/dev/null || return 1
+        hook=$(mktemp) || return 1
+        git show "$1:scripts/reverify-needed.sh" > "$hook" && chmod +x "$hook"
+        python3 -c 'import subprocess, sys
+try:
+    proc = subprocess.run(sys.argv[1:], timeout=120, stdout=subprocess.PIPE, text=True)
+except subprocess.TimeoutExpired:
+    print("scripts/reverify-needed.sh gave no answer in 120 s: verifying again")
+    sys.exit(1)
+lines = proc.stdout.strip().splitlines()
+sys.stdout.write("".join(f"  reverify-needed.sh: {line}\n" for line in lines[-5:]))
+sys.exit(0 if proc.returncode == 0 and lines[-1:] == ["no-reverify"] else 1)' \
+            "$hook" "$IPR_BASE_SHA" "$1" "$IPR_HEAD_SHA" <<<"$2"; rc=$?
+        rm -f "$hook"
+        [[ $rc == 0 ]]
+    }
+    # The last re-verification, inside the lock: merge onto the current base and verify that.
+    # 76: the verification failed; 77: it never ran (its wait for a slot was interrupted).
+    verify_locked() {
+        echo "verifying under the merge lock on origin/$IPR_BASE ($now): the base cannot move meanwhile"
+        remerge_onto "$now"
+        local rc
+        "$IPR_VERIFY" ${IPR_VERIFY_HERE:+--here} > "$IPR_LOG" 2>&1; rc=$?
+        if [[ $rc == 0 ]] && ! git diff --quiet; then
+            echo "scripts/check.sh changed tracked files:" >> "$IPR_LOG"; git diff --stat >> "$IPR_LOG"; rc=1
+        fi
+        [[ $rc == 120 ]] && exit 77
+        [[ $rc == 0 ]] || exit 76
+        git commit --quiet -F "$IPR_MSG" || fail 5 "git commit of the re-merge failed"
+        check_claim   # again: the verification was long, the claim may have changed hands
+    }
     # The claim may have changed hands while we verified (a stale-claim takeover): re-check it
     # here, under the lock, right before pushing.
-    if [[ "$IPR_MODE" == pool ]]; then
+    check_claim() {
+        [[ "$IPR_MODE" == pool ]] || return 0
+        local hb
         "$IPR_PS" heartbeat "$IPR_N" --owner "$IPR_ME" >/dev/null 2>&1; hb=$?
         [[ $hb != 4 ]] || fail 11 "pool-state.py refused the heartbeat: herdr no longer confirms this pane is $IPR_ME; nothing pushed"
         [[ $hb == 0 ]] || fail 10 "the claim on PR #$IPR_N is no longer $IPR_ME's: nothing pushed"
-    fi
+    }
+    check_claim
     git fetch --quiet origin "$IPR_BASE" || fail 6 "git fetch origin $IPR_BASE failed"
     now=$(git rev-parse "origin/$IPR_BASE") || fail 6 "no origin/$IPR_BASE"
     git merge-base --is-ancestor "$IPR_HEAD_SHA" "$now" \
         && fail 9 "the PR head is already in origin/$IPR_BASE ($now): merged by someone else"
-    if [[ "$now" != "$IPR_BASE_SHA" ]]; then
+    if [[ "${IPR_LOCKED_VERIFY:-}" == 1 ]]; then
+        verify_locked
+    elif [[ "$now" != "$IPR_BASE_SHA" ]]; then
         echo "origin/$IPR_BASE moved during the verification: $IPR_BASE_SHA -> $now"
         remerge_onto "$now"
         tree=$(git write-tree) || fail 6 "git write-tree failed"
@@ -98,9 +143,11 @@ sys.exit(0 if all(any(fnmatch.fnmatchcase(p, q) for q in pats) for p in paths) e
             "$IPR_EXEMPT" <<<"$changed"; then
             echo "the new base changes the verified tree outside the exempt paths:"
             head -n 20 <<<"$changed" | sed 's/^/  /'
-            exit 75
+            reverify_skipped "$now" "$changed" || exit 75
+            echo "scripts/reverify-needed.sh (from origin/$IPR_BASE) says these changes cannot affect this PR's checks; no re-verify"
+        else
+            echo "only exempt paths changed since the verification (${changed//$'\n'/, }); no re-verify"
         fi
-        echo "only exempt paths changed since the verification (${changed//$'\n'/, }); no re-verify"
         git commit --quiet -F "$IPR_MSG" || fail 5 "git commit of the re-merge failed"
     fi
     out=$(git push --porcelain origin "HEAD:refs/heads/$IPR_BASE" 2>&1) && exit 0
@@ -131,6 +178,7 @@ mode=$(jq -r .mode <<<"$config")
 base=$(jq -r .base_branch <<<"$config")
 max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
 exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
+locked_minutes=$(jq -r '.integrators.locked_reverify_minutes // 60' <<<"$config")
 if [[ "$mode" == pool ]]; then me="${MULTI_AGENT_HERDR_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
 [[ -n "$me" ]] || { echo "pool mode: MULTI_AGENT_HERDR_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
@@ -244,23 +292,27 @@ fi
 
 # 3. Verify, heartbeating the claim meanwhile (a verification can take longer than a TTL).
 log="$git_dir/multi-agent-herdr-verify-$N.log"
+hb=""
+start_heartbeat() {  # pool mode: heartbeat the claim every 2 minutes in the background
+    [[ "$mode" == pool ]] || return 0
+    # Its own stdio is /dev/null and it kills its own sleep when stopped: a child left
+    # holding the caller's stdout would keep `$(integrate-pr.sh ...)` waiting.
+    (
+        exec </dev/null >/dev/null 2>&1 9>&-
+        s=""; trap '[[ -n "$s" ]] && kill "$s"; exit 0' TERM
+        while :; do
+            sleep 120 & s=$!; wait "$s"
+            "$ps" heartbeat "$N" --owner "$me" || exit 0
+        done
+    ) &
+    hb=$!
+}
+stop_heartbeat() { [[ -z "$hb" ]] || kill "$hb" 2>/dev/null; hb=""; }
 run_verify() {
-    local rc hb=""
-    if [[ "$mode" == pool ]]; then
-        # Its own stdio is /dev/null and it kills its own sleep when stopped: a child left
-        # holding the caller's stdout would keep `$(integrate-pr.sh ...)` waiting.
-        (
-            exec </dev/null >/dev/null 2>&1
-            s=""; trap '[[ -n "$s" ]] && kill "$s"; exit 0' TERM
-            while :; do
-                sleep 120 & s=$!; wait "$s"
-                "$ps" heartbeat "$N" --owner "$me" || exit 0
-            done
-        ) &
-        hb=$!
-    fi
+    local rc
+    start_heartbeat
     "${verify[@]}" > "$log" 2>&1 9>&-; rc=$?
-    [[ -n "$hb" ]] && kill "$hb" 2>/dev/null
+    stop_heartbeat
     if [[ $rc -eq 0 ]] && ! git diff --quiet; then
         echo "scripts/check.sh changed tracked files:" >> "$log"; git diff --stat >> "$log"; rc=1
     fi
@@ -284,14 +336,23 @@ printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg"
 export IPR_BASE="$base" IPR_MODE="$mode" IPR_HEAD_SHA="$head" IPR_EXEMPT="$exempt" IPR_MSG="$msg"
 export IPR_PS="$ps" IPR_N="$N" IPR_ME="$me"
 export IPR_STATE="$git_dir/multi-agent-herdr-newbase-$N"
+export IPR_LOG="$log" IPR_VERIFY="${verify[0]}" IPR_VERIFY_HERE="${verify[1]:-}"
 
 # 4. Commit, then push under the merge lock; re-verify when the base moved under us.
-attempt=0
+attempt=0; locked=0
 while :; do
     export IPR_BASE_SHA="$base_sha" IPR_VERIFIED_TREE; IPR_VERIFIED_TREE=$(git write-tree)
     git commit --quiet -F "$msg" || requeue commit-failed 5 "git commit of the merge failed"
-    # --max-seconds: a hung fetch or push must not hold the merge lock for everyone.
-    "$ps" lock run --owner "$me" --timeout 900 --max-seconds 600 -- "$0" --push-under-lock 9>&-; rc=$?
+    if [[ $locked == 1 ]]; then
+        # The verification runs inside: allow it locked_reverify_minutes, plus the push.
+        export IPR_LOCKED_VERIFY=1; start_heartbeat
+        "$ps" lock run --owner "$me" --timeout 900 --max-seconds $((locked_minutes * 60 + 600)) \
+            -- "$0" --push-under-lock 9>&-; rc=$?
+        stop_heartbeat; tail -n 40 "$log"; echo "(full verification log: $log)"
+    else
+        # --max-seconds: a hung fetch or push must not hold the merge lock for everyone.
+        "$ps" lock run --owner "$me" --timeout 900 --max-seconds 600 -- "$0" --push-under-lock 9>&-; rc=$?
+    fi
     case $rc in
         0) break ;;
         3) finish_bounce conflict 3 "conflicts with the new origin/$base ($(cat "$IPR_STATE"))" ;;
@@ -300,14 +361,26 @@ while :; do
         4|11) requeue identity-refused 11 "herdr no longer confirms this pane's agent (pool-state.py refused); nothing pushed" keep-claim ;;
         75) ;;
         124) requeue lock-timeout 8 "merge lock not acquired in 900 s" ;;
-        125) requeue push-failed 6 "the push under the merge lock ran longer than 600 s and was killed" ;;
+        125) if [[ $locked == 1 ]]; then
+                 "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
+                 requeue push-failed 6 "the verification under the merge lock ran longer than $locked_minutes min (integrators.locked_reverify_minutes) and was killed; no bounce"
+             fi
+             requeue push-failed 6 "the push under the merge lock ran longer than 600 s and was killed" ;;
         5) requeue commit-failed 5 "git commit of the re-merge failed" ;;
+        76) finish_bounce verify-failed 4 "verify-merge.sh failed under the merge lock on the new origin/$base ($(cat "$IPR_STATE")); log: $log" ;;
+        77) "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
+            requeue not-verified 13 "the verification under the merge lock never ran (its wait for a slot was interrupted); no bounce; log: $log" ;;
         *) requeue push-failed 6 "the push under the merge lock failed (exit $rc); nothing landed" ;;
     esac
     attempt=$((attempt + 1))
     base_sha=$(cat "$IPR_STATE")
     [[ $attempt -le $max_reverify ]] \
         || requeue base-moving 7 "origin/$base moved $attempt times during verification; back to the queue"
+    if [[ $attempt -eq $max_reverify && $locked_minutes -gt 0 ]]; then
+        locked=1
+        echo "last re-verify ($attempt of $max_reverify): it runs holding the merge lock, so origin/$base cannot move again"
+        continue
+    fi
     echo "re-verifying on the new origin/$base (${base_sha:0:12}), attempt $attempt of $max_reverify"
     verified_or_out "the new origin/$base"
 done
@@ -324,6 +397,9 @@ if [[ "$remote_now" == "$head" && "$pr_head" == "$head" ]] && git merge-base --i
     git push --quiet --force-with-lease="refs/heads/$B:$head" origin --delete "$B" 2>/dev/null && branch="deleted"
 fi
 [[ "$branch" == kept ]] && echo "branch $B KEPT: remote ${remote_now:-?}, PR head ${pr_head:-?}, merged ${head}; the PR stays open if it has new commits"
+
+# The branch's number reservations (pool-state.py reserve) are spent: its files landed.
+"$ps" unreserve --owner "$B" >/dev/null 2>&1 || true
 
 # 6. Plan report and claim (pool mode).
 if [[ "$mode" == pool ]]; then

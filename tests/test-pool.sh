@@ -171,11 +171,16 @@ bad="$work/bad"; git init --quiet -b main "$bad"; mkdir -p "$bad/.claude"
 for json in '{"integrators": {"min": 3, "max": 2}}' '{"integrators": {"max": 17}}' '{"integrators": {"maxx": 2}}' \
             '{"integrators": {"max": 0}}' '{"integrators": {"max": true}}' '{"integrators": 3}' '{"mode": "pool"}' \
             '{"integrators": {}, "coordinator_name": "integrator-bad-1"}' '{"coordinator_name": "Coord"}' \
-            '{"integrators": {"reverify_exempt_paths": "docs/*"}}'; do
+            '{"integrators": {"reverify_exempt_paths": "docs/*"}}' '{"integrators": {"max_reverify": 0}}' \
+            '{"integrators": {"nudge_after_minutes": -1}}' '{"numbered_files": {"adr": "docs/(a)(b)"}}' \
+            '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}'; do
     printf '%s\n' "$json" > "$bad/.claude/multi-agent-herdr.json"
     "$pc" --root "$bad" >/dev/null 2>&1; status=$?
     check "project-config: rejects $json" [ "$status" == 1 ]
 done
+printf '%s\n' '{"integrators": {"locked_reverify_minutes": 0, "nudge_after_minutes": 0}}' > "$bad/.claude/multi-agent-herdr.json"
+check "project-config: 0 turns the locked re-verify and the nudges off" \
+    [ "$("$pc" --root "$bad" integrators.locked_reverify_minutes)$("$pc" --root "$bad" integrators.nudge_after_minutes)" == 00 ]
 # The template's coordinator.sh repeats the default name rule.
 mkdir -p "$work/names/Data Lab"; git init --quiet -b main "$work/names/Data Lab"
 mkdir -p "$work/names/Data Lab/scripts" && cp "$root/template/scripts/coordinator.sh" "$work/names/Data Lab/scripts/"
@@ -251,6 +256,8 @@ expect 2 "guard: a developer cleans up a branch"        "$g" "$(bash_cmd "$scrip
 expect 0 "guard: a developer lists the cleanup state"   "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh --list" "$d1")"
 CLAUDE_ROLE=integrator  expect 0 "guard: a pool integrator runs integrate-pr.sh" "$g" "$(bash_cmd "$ipr 12" "$wt1")"
 CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator spawns members"      "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$wt1")"
+CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator runs the pool watcher" "$g" "$(bash_cmd "$scripts/integrator-pool.sh watch" "$wt1")"
+expect 0 "guard: a developer reserves a number"     "$g" "$(bash_cmd "$ps reserve adr --owner feat/x" "$d1")"
 CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator spawns members"        "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$proj")"
 CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator cleans up"             "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh feat/x" "$proj")"
 for push in "git push --force origin HEAD:main" "git push origin +HEAD:main" "git push origin --delete main" \
@@ -570,6 +577,78 @@ kill "$leftover" 2>/dev/null; wait "$leftover" 2>/dev/null
 check "integrate-pr: a lock held by a dead run's leftover is taken over" \
     bash -c '[[ $1 == 0 && "$2" == *"taking over"* ]]' _ "$rc" "$out"
 
+# Number reservations (pool-state.py reserve, project setting numbered_files) --------------------
+cfg_json="$proj/.claude/multi-agent-herdr.json"; cfg_saved=$(cat "$cfg_json")
+cat > "$cfg_json" <<'JSON'
+{"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2}, "numbered_files": {"adr": "docs/decisions/(\\d{4})-.*\\.md"}}
+JSON
+"$work/push-main.sh" docs/decisions/0007-seven.md seven
+git -C "$dev" fetch --quiet origin && git -C "$dev" checkout --quiet -B feat/adr9 origin/main
+echo nine > "$dev/docs/decisions/0009-nine.md" && git -C "$dev" add -A && git -C "$dev" commit --quiet -m adr9 \
+    && git -C "$dev" push --quiet origin feat/adr9
+echo '[{"number": 40, "headRefName": "feat/adr9", "isCrossRepository": false},
+       {"number": 41, "headRefName": "feat/deleted", "isCrossRepository": false}]' > "$FAKE_GH/list.json"
+rsv() { (cd "$proj" && "$ps" reserve adr --owner "$1" 2>"$work/rsv.err"); }
+reserved() { (cd "$proj" && "$ps" reservations | cut -f2,3 | tr '\t\n' '  '); }
+check "reserve: above main (0007) and the open PRs (0009; a deleted head is skipped)" [ "$(rsv feat/a)" == 0010 ]
+check "reserve: above the numbers already reserved"        [ "$(rsv feat/b)" == 0011 ]
+(cd "$proj" && "$ps" unreserve --owner feat/b >/dev/null)
+check "unreserve: gives the branch's number back" [ "$(reserved)" == "10 feat/a " ]
+"$work/push-main.sh" docs/decisions/0010-ten.md ten
+check "reserve: a number that landed ends its reservation" \
+    bash -c '[[ $1 == 0011 && "$3" == "11 feat/c " ]] && grep -q "adr 10 landed" "$2"' _ "$(rsv feat/c)" "$work/rsv.err" "$(reserved)"
+check "reserve: an unknown kind is refused (exit 1)" exits 1 bash -c 'cd "$1" && "$2" reserve nope --owner x' _ "$proj" "$ps"
+mv "$FAKE_GH/list.json" "$FAKE_GH/list.away"
+check "reserve: fails closed when the open PRs cannot be listed (exit 1)" exits 1 bash -c 'cd "$1" && "$2" reserve adr --owner x' _ "$proj" "$ps"
+mv "$FAKE_GH/list.away" "$FAKE_GH/list.json"
+check "reserve: fails closed when the base cannot be fetched (exit 1)" \
+    exits 1 bash -c 'cd "$1" && "$2" reserve adr --owner x --base nosuch' _ "$proj" "$ps"
+echo '[]' > "$FAKE_GH/list.json"
+
+# Re-verify scope: the project's scripts/reverify-needed.sh, read from the new base -------------
+git -C "$pusher" fetch --quiet origin && git -C "$pusher" checkout --quiet -B main origin/main && mkdir -p "$pusher/scripts"
+cat > "$pusher/scripts/reverify-needed.sh" <<'SH'
+#!/usr/bin/env bash
+# Verify again unless every changed path is a docs/notes-* file.
+while read -r p; do [[ -z "$p" || "$p" == docs/notes-* ]] || { echo "code changed: $p"; exit 0; }; done
+echo no-reverify
+SH
+chmod +x "$pusher/scripts/reverify-needed.sh"
+git -C "$pusher" add -A && git -C "$pusher" commit --quiet -m "reverify hook" && git -C "$pusher" push --quiet origin main
+make_pr 21 feat/twentyone src/twentyone.txt x
+(cd "$proj" && "$ps" reserve adr --owner feat/twentyone >/dev/null 2>&1)
+printf '#!/usr/bin/env bash\n"%s" docs/notes-x.txt x\n' "$work/push-main.sh" > "$work/hook-other.sh"
+chmod +x "$work/hook-other.sh"; export CHECK_HOOK="$work/hook-other.sh"
+integrate 21
+check "integrate-pr: reverify-needed.sh says the new base cannot matter: merged, not re-verified" \
+    bash -c '[[ $1 == 0 && "$2" == *"reverify-needed.sh"*"no re-verify"* && $3 == 1 ]]' _ "$rc" "$out" "$(runs 21)"
+check "integrate-pr: the merged branch's number reservations end" bash -c '[[ "$1" != *feat/twentyone* ]]' _ "$(reserved)"
+make_pr 22 feat/twentytwo src/twentytwo.txt x
+printf '#!/usr/bin/env bash\n"%s" src/y.txt y\n' "$work/push-main.sh" > "$work/hook-src.sh"
+chmod +x "$work/hook-src.sh"; export CHECK_HOOK="$work/hook-src.sh"
+integrate 22
+check "integrate-pr: reverify-needed.sh asks for it: verified again" \
+    bash -c '[[ $1 == 0 && "$2" == *"re-verifying"* && $3 == 2 ]]' _ "$rc" "$out" "$(runs 22)"
+
+# The last re-verification holds the merge lock (max_reverify 1 here) ---------------------------
+cat > "$cfg_json" <<'JSON'
+{"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2, "max_reverify": 1}}
+JSON
+make_pr 23 feat/twentythree src/twentythree.txt x
+cat > "$work/hook-locked.sh" <<HOOK
+#!/usr/bin/env bash
+n=\$(( \$(cat "$work/locked.n" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$work/locked.n"
+if [[ \$n == 1 ]]; then rm -f "\$0.done"; "$work/push-main.sh" src/locked.txt z
+else (cd "$proj" && "$ps" lock status) > "$work/locked.status" 2>&1 || true; fi
+HOOK
+chmod +x "$work/hook-locked.sh"; export CHECK_HOOK="$work/hook-locked.sh"
+integrate 23
+check "integrate-pr: the last re-verify runs under the merge lock and merges" \
+    bash -c '[[ $1 == 0 && "$2" == *"holding the merge lock"* && $3 == 2 ]]' _ "$rc" "$out" "$(runs 23)"
+check "integrate-pr: the merge lock is held during that verification" grep -q "held by" "$work/locked.status"
+check "integrate-pr: both changes are on main" bash -c 'git -C "$1" cat-file -e main:src/locked.txt && git -C "$1" cat-file -e main:src/twentythree.txt' _ "$origin"
+printf '%s\n' "$cfg_saved" > "$cfg_json"
+
 make_pr 10 feat/ten src/ten.txt ten
 out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a PR it did not claim (exit 2)" bash -c '[[ $1 == 2 && "$2" == *"not claimed"* ]]' _ "$rc" "$out"
@@ -782,6 +861,35 @@ route >/dev/null; status=$?
 check "pool route: a pool name outside this repository does not count" [ "$status" == 1 ]
 agents integrator-single w1:p1 idle "$single"
 check "pool route: single mode routes to integrator_name" [ "$(cd "$single" && "$pool" route | cut -f1)" == integrator-single ]
+
+# integrator-pool.sh nudge / watch: idle members hear about PRs that wait unclaimed -------------
+st="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr"
+jq -n '[{number: 31, title: "PR 31", headRefName: "feat/x31", headRefOid: "abc", isDraft: false, createdAt: "2026-01-01T00:00:00Z"}]' \
+    > "$FAKE_GH/list.json"
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 idle "$wt2"
+nudge() { (cd "$proj" && env HERDR_ENV=1 "$pool" nudge 2>&1); }
+: > "$FAKE_LOG"; out=$(nudge)
+check "pool nudge: a PR just seen unclaimed waits (no prompt yet)" bash -c '[[ "$1" == *"no PR to nudge about"* && ! -s "$2" ]]' _ "$out" "$FAKE_LOG"
+echo $(( $(date +%s) - 400 )) > "$st/watch/pr-31"
+nudge >/dev/null
+check "pool nudge: after nudge_after_minutes the idle member is prompted" \
+    grep -q "prompt integrator-proj-2 \[herdr message from the pool watcher" "$FAKE_LOG"
+check "pool nudge: the working member is left alone" not grep -q "prompt integrator-proj-1" "$FAKE_LOG"
+: > "$FAKE_LOG"; nudge >/dev/null
+check "pool nudge: a member is nudged at most once per interval" [ ! -s "$FAKE_LOG" ]
+(cd "$proj" && env CLAUDECODE=1 CLAUDE_ROLE=integrator HERDR_ENV=1 "$pool" nudge >/dev/null 2>&1); status=$?
+check "pool nudge: refused to a Claude session that is not the coordinator" [ "$status" == 1 ]
+echo 3 > "$st/watch/pr-31.nudges"; rm -f "$st/watch/nudged-"*; : > "$FAKE_LOG"; nudge >/dev/null
+check "pool nudge: after 3 nudges the coordinator is told, not the members" \
+    bash -c 'grep -q "prompt coordinator-proj \[herdr message from the pool watcher" "$1" && ! grep -q "prompt integrator" "$1"' _ "$FAKE_LOG"
+: > "$FAKE_LOG"; nudge >/dev/null
+check "pool nudge: the coordinator is told once" [ ! -s "$FAKE_LOG" ]
+(cd "$proj" && exec env HERDR_ENV=1 "$pool" watch 10 > "$work/watch.out" 2>&1) & watcher=$!
+until_true test -s "$st/watch.pid"
+out=$(cd "$proj" && env HERDR_ENV=1 "$pool" watch 10 2>&1); status=$?
+check "pool watch: a second watcher exits 0 at once" bash -c '[[ $1 == 0 && "$2" == *"already runs"* ]]' _ "$status" "$out"
+kill "$(cat "$st/watch.pid")" 2>/dev/null; wait "$watcher" 2>/dev/null
+echo '[]' > "$FAKE_GH/list.json"
 
 for i in 2 3; do git -C "$proj" worktree add --quiet -b "feat/dev$i" "$work/proj-dev$i" origin/main; done
 agents dev1 w3:p1 working "$d1"  dev2 w5:p1 idle "$work/proj-dev2"  dev3 w6:p1 working "$work/proj-dev3" \

@@ -28,6 +28,19 @@ Lessons from the project's first night in pool mode (3 integrators, about 15 age
   back to the queue without a bounce.
 - `integrate-pr.sh` takes a per-worktree lock: a second run in the same verify worktree is
   refused (exit 2) instead of aborting the first run's merge.
+- Optional project hook `scripts/reverify-needed.sh` (read from the new base): when the base
+  moved during a verification, it decides whether the change can affect the PR's checks; when
+  it answers `no-reverify` (exit 0), the PR lands without a re-verification. Anything else
+  verifies again.
+- The last re-verification (`max_reverify`) runs holding the merge lock, so a long verification
+  cannot starve (`integrators.locked_reverify_minutes`, default 60; 0 turns it off).
+- `integrator-pool.sh nudge` / `watch`: a token-free watcher prompts idle members when an open PR
+  has waited unclaimed for `integrators.nudge_after_minutes` (default 5); the coordinator starts
+  it. After 3 nudges about a PR it tells the coordinator once. The `pr` skill re-announces
+  through `route` only.
+- Project setting `numbered_files` and `pool-state.py reserve` / `unreserve` / `reservations`:
+  migration and ADR numbers handed out per branch, so parallel branches never pick the same one;
+  the `dispatch` skill reserves them and writes them in the brief.
 - `integrate` skill: refresh claims, open PRs and the base after any pause; look for a recorded
   decision before asking, and never wait at a dialog holding a PR (comment, bounce, tell the
   coordinator, move on).

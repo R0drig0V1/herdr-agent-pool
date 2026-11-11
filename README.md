@@ -127,7 +127,8 @@ per-repository default applies):
 | `worktree_prefix` | `<repo>-` | development worktrees are `../<worktree_prefix><name>` |
 | `coordinator_name` | `coordinator-<repo>` (same rule) | pool mode: the coordinator's herdr name (`scripts/coordinator.sh`) |
 | `verify` | every field empty | merge verifications: `check_env` (variables for `scripts/check.sh`, e.g. a fast lane), `docs_only_paths` and `docs_only_env` (added when every changed path matches) |
-| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
+| `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`), `locked_reverify_minutes` (60; 0 off), `nudge_after_minutes` (5; 0 off); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
+| `numbered_files` | `{}` | numbered files parallel branches must not number alike, `{kind: regex}` with one group for the number (e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md"}`); `pool-state.py reserve <kind> --owner <branch>` hands out the next one |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
 (`project-config.py base_branch`, `project-config.py integrators.max`) or all of them as JSON
@@ -245,8 +246,8 @@ their settings and keep it; `/multi-agent-herdr:setup` offers to remove the key.
 | Script | `claim-integrator.sh` | Gives the integrator session its herdr name (`integrator_name`), or refuses when another agent holds it; run by the SessionStart hook, and by `dispatch` and `integrate` as a fallback |
 | Script | `project-config.py` | Reads and validates `.claude/multi-agent-herdr.json` (see Configuration) |
 | Script | `integrate-pr.sh` | One PR, gated step by step: merge, `verify-merge.sh`, commit, push under the merge lock (re-verify when the base moved), branch deletion only when nothing moved; exit code = outcome |
-| Script | `pool-state.py` | Pool state in the git common dir: atomic PR claims, bounced heads, the merge lock (`lock run`), plan reports |
-| Script | `integrator-pool.sh` | `list`, `route` (who `pr` announces to), `scale` (facts and a suggestion; the coordinator decides), `spawn <n>`, `stop <n> [--remove-worktree]` |
+| Script | `pool-state.py` | Pool state in the git common dir: atomic PR claims, bounced heads, the merge lock (`lock run`), plan reports, number reservations (`reserve`, `unreserve`, `reservations`) |
+| Script | `integrator-pool.sh` | `list`, `route` (who `pr` announces to), `scale` (facts and a suggestion; the coordinator decides), `spawn <n>`, `stop <n> [--remove-worktree]`, `nudge` and `watch` (prompt idle members about PRs that wait unclaimed) |
 | Script | `resource-budget.py` | The hard floor: at most `heavy_slots` heavy commands at once on the machine, in a priority queue (`run`), holders and waiters (`status`), and the limits (`limits`) |
 | Script | `resource-board.sh` | The shared resource sheet: agents `note` and `clear` what they run; `show` prints memory, slots, notes and idle agents |
 | Script | `cleanup-worktree.sh` | After a merge: `--list` the development worktrees and their state; `<branch>` closes the agent's workspace, removes the worktree and deletes the branches, only when merged (a merged PR, tip in the base), clean and idle |

@@ -13,6 +13,7 @@ dir; this script keeps the pool's state there, in `<git common dir>/multi-agent-
     reports/pr-<N>.json        "PR merged, tick its plan tasks", until the coordinator ticks
     reports/done/pr-<N>.json   them (`report done`), so a coordinator that was down catches up
     members/<name>.activity    touched on every claim, release and bounce (scale-down idleness)
+    reservations/<kind>.json   numbers handed out by `reserve` (project setting numbered_files)
 
 Commands:
 
@@ -33,6 +34,18 @@ Commands:
     report known N                      exit 0 when PR N was reported (pending or done)
     whoami                              the herdr agent of the calling pane (exit 4: unknown)
     activity NAME | idle-seconds NAME   touch / read a member's last activity
+    reserve KIND --owner BRANCH [--base BRANCH]
+                                        the next free number of a numbered_files kind (e.g. a
+                                        migration or an ADR), printed zero-padded, reserved
+                                        for BRANCH: above every number on origin/<base>, in an
+                                        open PR's head and already reserved
+    unreserve --owner BRANCH [--kind KIND] [--number N]
+                                        give back BRANCH's reservations (all, or one)
+    reservations                        one line per reservation: kind number owner age-s
+
+A reservation ends when its number lands on origin/<base> (the next `reserve` prunes it), when
+`integrate-pr.sh` merges its branch, or with `unreserve`. Reservations are cooperative (no
+identity check): they only keep honest parallel branches from picking the same number.
 
 A claim is **stale** when its heartbeat is older than `integrators.claim_ttl_minutes` (default
 60), or when its owner has been missing from `herdr agent list` for
@@ -68,6 +81,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -225,7 +239,7 @@ class State:
         self.root = root
         self.ttl = ttl_minutes * 60
         self._live: set[str] | None | bool = False  # False: not asked yet
-        for sub in ("claims", "bounced", "lock", "reports/done", "members"):
+        for sub in ("claims", "bounced", "lock", "reports/done", "members", "reservations"):
             os.makedirs(os.path.join(root, sub), exist_ok=True)
 
     def path(self, *parts: str) -> str:
@@ -237,6 +251,16 @@ class State:
         queue): without it, two integrators that both judge a claim stale could each move the
         other's fresh claim aside and both own the PR. A kernel flock: freed if we die."""
         fd = os.open(self.path("claims", ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+    @contextlib.contextmanager
+    def reservations_lock(self) -> Any:
+        """Serialise every read-decide-write of the number reservations (a kernel flock)."""
+        fd = os.open(self.path("reservations", ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
@@ -421,6 +445,114 @@ class State:
         return sorted(found, key=lambda d: d.get("at", 0))
 
 
+# Number reservations -------------------------------------------------------------------------
+
+
+def numbers_in(ref: str, regex: re.Pattern[str]) -> dict[int, int]:
+    """{number: digits} of the paths in `ref`'s tree that `regex` matches ({} if no such ref)."""
+    cmd = ["git", "ls-tree", "-r", "--name-only", ref]
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    found: dict[int, int] = {}
+    for path in out.stdout.splitlines() if out.returncode == 0 else []:
+        match = regex.fullmatch(path)
+        if match and match.group(1) and match.group(1).isdigit():
+            found[int(match.group(1))] = len(match.group(1))
+    return found
+
+
+def open_pr_refs(base: str) -> list[str]:
+    """Remote-tracking refs of the open PRs' heads against `base`, freshly fetched.
+
+    Raises OSError when they cannot be known: a number handed out without them could collide
+    with a PR that took one without a reservation. Branches already deleted on origin are
+    skipped (one missing refspec would fail the whole fetch).
+    """
+    proc = subprocess.run(
+        ["gh", "pr", "list", "--base", base, "--state", "open", "--limit", "200",
+         "--json", "headRefName,isCrossRepository"],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    if proc.returncode != 0:
+        raise OSError(f"gh pr list failed: {proc.stderr.strip()}")
+    names = [p["headRefName"] for p in json.loads(proc.stdout) if not p.get("isCrossRepository")]
+    if not names:
+        return []
+    cmd = ["git", "ls-remote", "--heads", "origin"]
+    heads = subprocess.run(cmd, capture_output=True, text=True)
+    if heads.returncode != 0:
+        raise OSError(f"git ls-remote origin failed: {heads.stderr.strip()}")
+    present = {line.split("refs/heads/", 1)[-1] for line in heads.stdout.splitlines()}
+    names = [n for n in names if n in present]
+    specs = [f"+refs/heads/{n}:refs/remotes/origin/{n}" for n in names]
+    if specs and subprocess.run(["git", "fetch", "--quiet", "origin", *specs]).returncode != 0:
+        raise OSError("git fetch of the open PRs' heads failed")
+    return [f"origin/{n}" for n in names]
+
+
+def reserve(state: State, args: argparse.Namespace, config: dict[str, Any]) -> int:
+    kinds = config["numbered_files"]
+    if args.kind not in kinds:
+        known = ", ".join(sorted(kinds)) or "none: set numbered_files in the project settings"
+        print(f"pool-state: unknown kind {args.kind!r} (known: {known})", file=sys.stderr)
+        return 1
+    regex, base = re.compile(kinds[args.kind]), args.base or config["base_branch"]
+    try:  # fail closed: a number computed from stale or missing trees could collide
+        if subprocess.run(["git", "fetch", "--quiet", "origin", base]).returncode != 0:
+            raise OSError(f"git fetch origin {base} failed")
+        refs = open_pr_refs(base)
+    except (OSError, ValueError) as exc:  # ValueError: gh printed something that is not JSON
+        print(f"pool-state: no number reserved: {exc}; try again", file=sys.stderr)
+        return 1
+    landed = numbers_in(f"origin/{base}", regex)
+    in_prs: dict[int, int] = {}
+    for ref in refs:
+        in_prs.update(numbers_in(ref, regex))
+    path = state.path("reservations", f"{args.kind}.json")
+    with state.reservations_lock():
+        held = read_json(path) or {}
+        for number in [n for n in held if int(n) in landed]:
+            print(f"pool-state: {args.kind} {number} landed on {base}: reservation of "
+                  f"{held.pop(number).get('owner', '?')} ended", file=sys.stderr)  # fmt: skip
+        taken = set(landed) | set(in_prs) | {int(n) for n in held}
+        number = max(taken, default=0) + 1
+        held[str(number)] = {"owner": args.owner, "at": time.time()}
+        write_json(path, held)
+    width = max([*landed.values(), *in_prs.values()], default=4)
+    print(str(number).zfill(width))
+    return 0
+
+
+def unreserve(state: State, args: argparse.Namespace) -> int:
+    gone = []
+    with state.reservations_lock():
+        for entry in sorted(os.listdir(state.path("reservations"))):
+            kind = entry[: -len(".json")]
+            if not entry.endswith(".json") or (args.kind and kind != args.kind):
+                continue
+            path = state.path("reservations", entry)
+            held = read_json(path) or {}
+            mine = [n for n, r in held.items() if r.get("owner") == args.owner
+                    and (args.number is None or int(n) == args.number)]  # fmt: skip
+            for number in mine:
+                del held[number]
+                gone.append(f"{kind} {number}")
+            if mine:
+                write_json(path, held)
+    print(f"released: {', '.join(gone)}" if gone else f"no reservation of {args.owner} to release")
+    return 0
+
+
+def reservations(state: State) -> int:
+    now = time.time()
+    for entry in sorted(os.listdir(state.path("reservations"))):
+        if entry.endswith(".json"):
+            held = read_json(state.path("reservations", entry)) or {}
+            for number, r in sorted(held.items(), key=lambda item: int(item[0])):
+                age = now - float(r.get("at", now))
+                print(f"{entry[: -len('.json')]}\t{number}\t{r.get('owner', '?')}\t{age:.0f}")
+    return 0
+
+
 # The merge lock -------------------------------------------------------------------------------
 
 
@@ -541,6 +673,15 @@ def parser() -> argparse.ArgumentParser:
     for name in ("activity", "idle-seconds"):
         sub.add_parser(name).add_argument("name")
     sub.add_parser("whoami")
+    res = sub.add_parser("reserve")
+    res.add_argument("kind")
+    res.add_argument("--owner", required=True, help="the branch the number is for")
+    res.add_argument("--base", default="", help="default: the project's base_branch")
+    unres = sub.add_parser("unreserve")
+    unres.add_argument("--owner", required=True)
+    unres.add_argument("--kind", default="")
+    unres.add_argument("--number", type=int)
+    sub.add_parser("reservations")
     return p
 
 
@@ -643,7 +784,12 @@ def main() -> int:
     if problem:
         print(f"pool-state: refused: {problem}", file=sys.stderr)
         return EXIT_IDENTITY
-    return run(State(root, int(config["integrators"]["claim_ttl_minutes"])), args)
+    state = State(root, int(config["integrators"]["claim_ttl_minutes"]))
+    if args.cmd == "reserve":
+        return reserve(state, args, config)
+    if args.cmd in ("unreserve", "reservations"):
+        return unreserve(state, args) if args.cmd == "unreserve" else reservations(state)
+    return run(state, args)
 
 
 if __name__ == "__main__":

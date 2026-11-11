@@ -33,8 +33,17 @@ Keys (all optional; a missing file means every default):
   mode**, where a coordinator owns the main worktree and N integrators merge in parallel, each
   in its own verify worktree. Its keys, all optional: `min` (1), `max` (3, at most
   `POOL_MAX`), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30),
-  `claim_ttl_minutes` (60), `max_reverify` (3) and `reverify_exempt_paths`
-  (`["docs/phases/*.md"]`, fnmatch patterns; `[]` when a check reads the plan).
+  `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths`
+  (`["docs/phases/*.md"]`, fnmatch patterns; `[]` when a check reads the plan),
+  `locked_reverify_minutes` (60; the last re-verification runs holding the merge lock, so the
+  base cannot move under it again, and is killed after that many minutes; 0 turns it off) and
+  `nudge_after_minutes` (5; `integrator-pool.sh watch` prompts an idle member when an open PR
+  has waited unclaimed that long; 0 turns the nudges off).
+* `numbered_files` (default `{}`): numbered files that parallel branches must not number
+  alike, as `{kind: regex}`; the regex matches a whole repository path and captures the
+  number in its one group, e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md",
+  "migration": "src/app/migrations/(\\d{4})_.*\\.sql"}`. `pool-state.py reserve <kind>`
+  hands out the next free number. Kinds look like `[a-z][a-z0-9_-]*`.
 * `verify` (default: every field empty): how `verify-merge.sh` runs the project's
   `scripts/check.sh` on a merge. Its keys, all optional:
   `check_env` (`{}`): variables added to the check's environment on every merge
@@ -89,7 +98,12 @@ POOL_DEFAULTS: dict[str, Any] = {
     "claim_ttl_minutes": 60,
     "max_reverify": 3,
     "reverify_exempt_paths": ["docs/phases/*.md"],
+    "locked_reverify_minutes": 60,
+    "nudge_after_minutes": 5,
 }
+# integrators keys where 0 means "off"
+ZERO_OFF = ("locked_reverify_minutes", "nudge_after_minutes")
+KIND = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 VERIFY_DEFAULTS: dict[str, Any] = {"check_env": {}, "docs_only_paths": [], "docs_only_env": {}}
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RESERVED_ENV = ("CLAUDE_", "HERDR_", "MULTI_AGENT_HERDR_")
@@ -157,6 +171,7 @@ def defaults(root: str) -> dict[str, Any]:
         "coordinator_name": default_coordinator_name(root),
         "integrators": None,
         "verify": {k: type(v)() for k, v in VERIFY_DEFAULTS.items()},
+        "numbered_files": {},
         "mode": "single",
         "integrator_pool": [],
     }
@@ -176,8 +191,9 @@ def _pool_settings(path: str, value: Any) -> dict[str, Any]:
         if key == "reverify_exempt_paths":
             if not isinstance(item, list) or not all(isinstance(v, str) and v for v in item):
                 raise ConfigError(f"{path}: integrators.{key} must be a list of patterns")
-        elif isinstance(item, bool) or not isinstance(item, int) or item < 1:
-            raise ConfigError(f"{path}: integrators.{key} must be a positive integer, got {item!r}")
+        elif isinstance(item, bool) or not isinstance(item, int) or item < (key not in ZERO_OFF):
+            what = "a non-negative" if key in ZERO_OFF else "a positive"
+            raise ConfigError(f"{path}: integrators.{key} must be {what} integer, got {item!r}")
         elif key in ("min", "max") and item > POOL_MAX:
             raise ConfigError(f"{path}: integrators.{key} must be at most {POOL_MAX}, got {item}")
         pool[key] = item
@@ -219,6 +235,28 @@ def _verify_settings(path: str, value: Any) -> dict[str, Any]:
     return result
 
 
+def _numbered_files(path: str, value: Any) -> dict[str, str]:
+    """Validated `numbered_files` object: {kind: regex with one group} (raises ConfigError)."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: numbered_files must be an object of kind: regex")
+    result = {}
+    for kind, pattern in value.items():
+        if kind.startswith("$"):
+            continue
+        if not KIND.fullmatch(kind):
+            raise ConfigError(f"{path}: numbered_files: {kind!r} must match [a-z][a-z0-9_-]*")
+        try:
+            groups = re.compile(pattern).groups if isinstance(pattern, str) else -1
+        except re.error as exc:
+            raise ConfigError(f"{path}: numbered_files.{kind}: invalid regex: {exc}") from exc
+        if groups != 1:
+            raise ConfigError(
+                f"{path}: numbered_files.{kind} must be a regex with exactly one group (the number)"
+            )
+        result[kind] = pattern
+    return result
+
+
 def valid_branch(name: str) -> bool:
     """Whether `name` is a usable branch name (`git check-ref-format --branch` rules, offline)."""
     return bool(
@@ -244,6 +282,8 @@ def _checked(path: str, key: str, value: Any) -> Any:
         return _pool_settings(path, value)
     elif key == "verify":
         return _verify_settings(path, value)
+    elif key == "numbered_files":
+        return _numbered_files(path, value)
     elif key == "protected_branches":
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
             raise ConfigError(f"{path}: protected_branches must be a list of patterns")
