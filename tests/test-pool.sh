@@ -549,6 +549,27 @@ check "integrate-pr: base moved by code: verified again, then merged" \
     bash -c '[[ $1 == 0 && "$2" == *"re-verifying"* && $3 == 2 ]]' _ "$rc" "$out" "$(runs 7)"
 check "integrate-pr: main has both changes" bash -c 'on() { git -C "$1" cat-file -e "main:$2"; }; on "$1" src/other.txt && on "$1" src/seven.txt' _ "$origin"
 
+# One run per worktree: a second integrate-pr.sh started mid-check is refused (exit 2) and the
+# first one still lands; a lock left held by a dead run's leftover is taken over.
+make_pr 8 feat/eight src/eight.txt eight
+make_pr 9 feat/nine src/nine.txt nine
+printf '#!/usr/bin/env bash\n(cd "%s" && "%s" claim 9 --owner "%s" >/dev/null)\n"%s" 9 > "%s/second.out" 2>&1; echo $? > "%s/second.rc"\n' \
+    "$proj" "$ps" "$me" "$ipr" "$work" "$work" > "$work/hook-second.sh"
+chmod +x "$work/hook-second.sh"; export CHECK_HOOK="$work/hook-second.sh"
+integrate 8
+check "integrate-pr: a second run in the same worktree is refused (exit 2)" \
+    bash -c '[[ $(cat "$1/second.rc") == 2 ]] && grep -q "another integrate-pr.sh is running" "$1/second.out"' _ "$work"
+check "integrate-pr: the first run still merges" bash -c '[[ $1 == 0 ]]' _ "$rc"
+check "integrate-pr: the first run's PR is on main" on_main src/eight.txt
+wt_lock="$(git -C "$wt1" rev-parse --absolute-git-dir)/multi-agent-herdr-integrate.lock"
+python3 -c 'import fcntl, sys, time
+f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); f.seek(0); f.truncate(); f.write("999999 PR #0\n"); f.flush(); time.sleep(60)' "$wt_lock" &
+leftover=$!; for _ in $(seq 1 100); do grep -q 999999 "$wt_lock" 2>/dev/null && break; sleep 0.1; done
+integrate 9
+kill "$leftover" 2>/dev/null; wait "$leftover" 2>/dev/null
+check "integrate-pr: a lock held by a dead run's leftover is taken over" \
+    bash -c '[[ $1 == 0 && "$2" == *"taking over"* ]]' _ "$rc" "$out"
+
 make_pr 10 feat/ten src/ten.txt ten
 out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a PR it did not claim (exit 2)" bash -c '[[ $1 == 2 && "$2" == *"not claimed"* ]]' _ "$rc" "$out"

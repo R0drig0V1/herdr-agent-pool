@@ -19,9 +19,9 @@
 # heartbeats it and releases it on every outcome but a lost claim).
 #
 # Steps, each gated on the previous one's exit code:
-#  1. Preconditions: settings, role, worktree, no merge in progress (a crashed run's merge is
-#     aborted), clean tree, the PR open against the base branch from this repository, and
-#     origin/<branch> equal to the PR's head.
+#  1. Preconditions: settings, role, worktree, no other run in this worktree (a per-worktree
+#     lock), no merge in progress (a crashed run's merge is aborted), clean tree, the PR open
+#     against the base branch from this repository, and origin/<branch> equal to the PR's head.
 #  2. Start from origin/<base> (pool: detached checkout; single: fast-forward of <base>), then
 #     `git merge --no-ff --no-commit` the PR head. A conflict stops it (exit 3), unless every
 #     conflicted file was given with --union-rows and union-rows.py resolves it.
@@ -150,6 +150,24 @@ fi
 top=$(git rev-parse --show-toplevel) || stop "not inside a git repository"
 cd "$top" || exit 2
 git_dir=$(git rev-parse --absolute-git-dir); common=$(git rev-parse --path-format=absolute --git-common-dir)
+# One run per worktree: a second run here would take the first one's merge for a crashed run's
+# and abort it. A kernel flock on a file in this worktree's git dir, held on fd 9 for the whole
+# run (the kernel frees it when we die). The verification and the push get fd 9 closed, so a
+# daemon a check leaves behind cannot hold it; a lock whose recorded run is dead is taken over.
+wt_lock="$git_dir/multi-agent-herdr-integrate.lock"
+exec 9>>"$wt_lock" || stop "cannot open $wt_lock"
+if ! python3 -c 'import fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(1)'; then
+    holder=$(head -n 1 "$wt_lock" 2>/dev/null); hpid=${holder%% *}
+    if [[ "$hpid" =~ ^[0-9]+$ ]] && kill -0 "$hpid" 2>/dev/null; then
+        stop "another integrate-pr.sh is running in this worktree ($holder): wait for its RESULT, never start a second run here"
+    fi
+    echo "warning: the integrate lock of this worktree is held by a leftover of a dead run (${holder:-unknown}); taking over" >&2
+fi
+printf '%s PR #%s %s\n' "$$" "$N" "$(date -u +%FT%TZ)" > "$wt_lock"
 if [[ "$mode" == pool ]]; then
     [[ "$git_dir" != "$common" ]] || stop "pool mode: run it in your own verify worktree, not the main worktree (the coordinator's)"
     "$ps" heartbeat "$N" --owner "$me" >/dev/null || stop "PR #$N is not claimed by $me (pool-state.py claim $N --owner $me)"
@@ -163,7 +181,7 @@ fi
 if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
     echo "aborting a merge left in progress by an earlier run"
     git merge --abort || stop "could not abort the merge in progress"
-    "${verify[@]}" --reset-only >/dev/null 2>&1 || true
+    "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
 fi
 [[ -z "$(git status --porcelain)" ]] || { git status --short >&2; stop "the worktree $top is not clean"; }
 
@@ -179,7 +197,7 @@ git fetch --quiet --prune origin "$base" "refs/heads/$B:refs/remotes/origin/$B" 
 
 finish_bounce() {  # finish_bounce <outcome> <exit code> <reason>: reset, record, report
     git merge --abort >/dev/null 2>&1 || true
-    "${verify[@]}" --reset-only >/dev/null 2>&1 || true
+    "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
     if [[ "$mode" == pool ]]; then git checkout --quiet --detach "origin/$base"
     else git reset --quiet --hard "origin/$base"; fi
     "$ps" bounce "$N" --head "$head" --owner "$me" >/dev/null \
@@ -241,7 +259,7 @@ run_verify() {
         ) &
         hb=$!
     fi
-    "${verify[@]}" > "$log" 2>&1; rc=$?
+    "${verify[@]}" > "$log" 2>&1 9>&-; rc=$?
     [[ -n "$hb" ]] && kill "$hb" 2>/dev/null
     if [[ $rc -eq 0 ]] && ! git diff --quiet; then
         echo "scripts/check.sh changed tracked files:" >> "$log"; git diff --stat >> "$log"; rc=1
@@ -254,7 +272,7 @@ verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, r
     run_verify; local rc=$?
     [[ $rc == 0 ]] && return 0
     if [[ $rc == 120 ]]; then
-        "${verify[@]}" --reset-only >/dev/null 2>&1 || true
+        "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
         requeue not-verified 13 "the verification never ran (its wait for a slot was interrupted); no bounce; log: $log"
     fi
     finish_bounce verify-failed 4 "verify-merge.sh failed on the merge with $1 (${base_sha:0:12}); log: $log"
@@ -273,7 +291,7 @@ while :; do
     export IPR_BASE_SHA="$base_sha" IPR_VERIFIED_TREE; IPR_VERIFIED_TREE=$(git write-tree)
     git commit --quiet -F "$msg" || requeue commit-failed 5 "git commit of the merge failed"
     # --max-seconds: a hung fetch or push must not hold the merge lock for everyone.
-    "$ps" lock run --owner "$me" --timeout 900 --max-seconds 600 -- "$0" --push-under-lock; rc=$?
+    "$ps" lock run --owner "$me" --timeout 900 --max-seconds 600 -- "$0" --push-under-lock 9>&-; rc=$?
     case $rc in
         0) break ;;
         3) finish_bounce conflict 3 "conflicts with the new origin/$base ($(cat "$IPR_STATE"))" ;;

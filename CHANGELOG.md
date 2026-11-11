@@ -26,6 +26,8 @@ Lessons from the project's first night in pool mode (3 integrators, about 15 age
   the caller exported wins over both.
 - `integrate-pr.sh` exit 13: the verification never ran (its wait for a slot was interrupted),
   back to the queue without a bounce.
+- `integrate-pr.sh` takes a per-worktree lock: a second run in the same verify worktree is
+  refused (exit 2) instead of aborting the first run's merge.
 - `integrate` skill: refresh claims, open PRs and the base after any pause; look for a recorded
   decision before asking, and never wait at a dialog holding a PR (comment, bounce, tell the
   coordinator, move on).

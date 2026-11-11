@@ -174,7 +174,7 @@ it refuses when two rows share a key (two PRs took the same ADR number: bounce).
 | 10 | the claim changed hands during the verification (another integrator took it over); nothing pushed, worktree reset | leave the PR to its new owner, step 1 |
 | 13 | the verification never ran: its wait for a heavy or light slot was interrupted (someone stopped the waiting `resource-budget.py`); no bounce, worktree reset, claim released | back to step 1 (the PR is still in the queue) |
 | 11 | herdr stopped confirming that this pane's agent is `<me>` (pool-state.py refused, exit 4); nothing pushed | stop and tell the user: the session's identity is in doubt |
-| 2 | a precondition failed, nothing changed: dirty worktree, claim not yours, PR not open, `origin/<B>` not the PR head yet, or this pane's herdr agent is not `<me>` | fix the precondition or tell the user |
+| 2 | a precondition failed, nothing changed: another `integrate-pr.sh` is running in this worktree, dirty worktree, claim not yours, PR not open, `origin/<B>` not the PR head yet, or this pane's herdr agent is not `<me>` | another run: wait for its `RESULT` line (one run per worktree, never a second); otherwise fix the precondition or tell the user |
 | 5, 6 | the commit or the push failed, or the push under the lock hung (killed after 600 s); nothing landed, claim released, worktree reset | tell the user (or the coordinator) with the output; do not retry blindly |
 
 The verification takes one of the machine's heavy slots (`resource-budget.py`, shared with
