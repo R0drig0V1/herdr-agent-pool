@@ -727,6 +727,8 @@ check "verify-merge: check_env plus docs_only_env on a docs-only change" [ "$(ca
 echo b >> "$vm/src/a.py"; git -C "$vm" add -A
 vmrun
 check "verify-merge: only check_env when code changed too" [ "$(cat "$work/vm-out")" == "scope=fast docs=" ]
+(cd "$vm" && env VM_OUT="$work/vm-out" SCOPE=full "$scripts/verify-merge.sh" >/dev/null 2>&1)
+check "verify-merge: a variable the caller exported wins over check_env" [ "$(cat "$work/vm-out")" == "scope=full docs=" ]
 echo '{"verify": {"check_env": {"CLAUDE_ROLE": "integrator"}}}' > "$vm/.claude/multi-agent-herdr.json"
 check "project-config: refuses an identity variable in verify.check_env" exits 1 "$scripts/project-config.py" --root "$vm"
 echo '{"verify": {"check_env": {"SCOPE": 1}}}' > "$vm/.claude/multi-agent-herdr.json"

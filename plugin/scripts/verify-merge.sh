@@ -92,12 +92,14 @@ if [[ -x scripts/worktree-setup.sh ]]; then
 fi
 failed_step="checks"; step "$failed_step"
 # The project's check variables (verify.check_env, plus verify.docs_only_env on a docs-only
-# merge), one NAME=value per line. An invalid settings file stops the verification here.
+# merge), one NAME=value per line. A variable the caller exported wins (for example
+# PROJECT_CHECK_SCOPE=full for a full-scope merge verification). An invalid settings file
+# stops the verification here.
 vcfg=$("$pc" --root "$main_root" verify)
 check_env=()
 while IFS= read -r line; do
     [[ -n "$line" ]] && check_env+=("$line")
-done < <(git diff --no-renames --name-only HEAD | python3 -c 'import fnmatch, json, sys
+done < <(git diff --no-renames --name-only HEAD | python3 -c 'import fnmatch, json, os, sys
 cfg = json.loads(sys.argv[1])
 paths = [p for p in sys.stdin.read().splitlines() if p]
 pats = cfg["docs_only_paths"]
@@ -105,7 +107,10 @@ env = dict(cfg["check_env"])
 if pats and paths and all(any(fnmatch.fnmatchcase(p, q) for q in pats) for p in paths):
     print("docs-only merge: adding verify.docs_only_env", file=sys.stderr)
     env.update(cfg["docs_only_env"])
-print("\n".join(f"{k}={v}" for k, v in env.items()))' "$vcfg")
+kept = sorted(k for k in env if k in os.environ)
+if kept:
+    print("exported by the caller, kept: " + " ".join(f"{k}={os.environ[k]}" for k in kept), file=sys.stderr)
+print("\n".join(f"{k}={v}" for k, v in env.items() if k not in os.environ))' "$vcfg")
 [[ ${#check_env[@]} -eq 0 ]] || echo "check environment: ${check_env[*]}"
 if [[ -x scripts/check.sh ]]; then
     heavy env ${check_env[@]+"${check_env[@]}"} scripts/check.sh

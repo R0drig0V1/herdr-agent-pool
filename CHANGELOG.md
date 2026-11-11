@@ -22,7 +22,8 @@ Lessons from the project's first night in pool mode (3 integrators, about 15 age
   limit) and the waiters in turn order; `resource-board.sh show` prints it.
 - `$MULTI_AGENT_HERDR_SLOT_COUNT` for the command in a slot (the pool's limit at admission).
 - Project setting `verify` (`check_env`, `docs_only_paths`, `docs_only_env`): variables for
-  `scripts/check.sh` on merge verifications, e.g. a fast lane, and a docs-only lane.
+  `scripts/check.sh` on merge verifications, e.g. a fast lane, and a docs-only lane. A variable
+  the caller exported wins over both.
 - `integrate-pr.sh` exit 13: the verification never ran (its wait for a slot was interrupted),
   back to the queue without a bounce.
 - `integrate` skill: refresh claims, open PRs and the base after any pause; look for a recorded

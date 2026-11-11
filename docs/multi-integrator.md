@@ -49,7 +49,9 @@ A `verify` object, in either mode, shapes the merge verification: `check_env` ad
 to `scripts/check.sh`'s environment on every merge verification (for example
 `{"PROJECT_CHECK_SCOPE": "fast"}`: a fast lane for merges while promotions run the full
 check), and `docs_only_env` is added on top when every path the merge changes matches
-`docs_only_paths` (a docs-only lane; off while that list is empty). Identity variables
+`docs_only_paths` (a docs-only lane; off while that list is empty). A variable the caller
+already exported wins over both (export `PROJECT_CHECK_SCOPE=full` before `integrate-pr.sh`
+for a full-scope merge verification). Identity variables
 (`CLAUDE_*`, `HERDR_*`, `MULTI_AGENT_HERDR_*`) are refused. `project-config.py` derives `mode` (`single`/`pool`) and `integrator_pool`
 (`<integrator_name>-1` .. `-max`, each cut to herdr's 32 characters).
 
