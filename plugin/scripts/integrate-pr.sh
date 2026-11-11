@@ -51,8 +51,9 @@
 # (bounce); 5 commit failed; 6 push failed or timed out; 7 the base kept moving; 8 merge lock
 # not acquired; 9 nothing to merge (the head is already in the base); 10 the claim changed hands
 # (nothing pushed); 11 herdr stopped confirming this pane's identity under the lock (nothing
-# pushed). On 5-9 the claim is released and the worktree reset: the PR goes back to
-# the queue without a bounce. Needs git, gh, jq, python3 and (inside herdr) herdr.
+# pushed); 13 the verification never ran (verify-merge.sh exit 120: its wait for a slot was
+# interrupted), which is no verdict. On 5-10 and 13 the worktree is reset and the PR goes back
+# to the queue without a bounce (the claim is released, except on 10). Needs git, gh, jq, python3 and (inside herdr) herdr.
 set -uo pipefail
 
 here_dir=$(cd "$(dirname "$0")" && pwd)
@@ -249,7 +250,16 @@ run_verify() {
     echo "(full verification log: $log)"
     return "$rc"
 }
-run_verify || finish_bounce verify-failed 4 "verify-merge.sh failed on the merge with origin/$base (${base_sha:0:12}); log: $log"
+verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, requeue when nothing ran
+    run_verify; local rc=$?
+    [[ $rc == 0 ]] && return 0
+    if [[ $rc == 120 ]]; then
+        "${verify[@]}" --reset-only >/dev/null 2>&1 || true
+        requeue not-verified 13 "the verification never ran (its wait for a slot was interrupted); no bounce; log: $log"
+    fi
+    finish_bounce verify-failed 4 "verify-merge.sh failed on the merge with $1 (${base_sha:0:12}); log: $log"
+}
+verified_or_out "origin/$base"
 
 msg="$git_dir/multi-agent-herdr-merge-msg-$N"
 printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg"
@@ -281,7 +291,7 @@ while :; do
     [[ $attempt -le $max_reverify ]] \
         || requeue base-moving 7 "origin/$base moved $attempt times during verification; back to the queue"
     echo "re-verifying on the new origin/$base (${base_sha:0:12}), attempt $attempt of $max_reverify"
-    run_verify || finish_bounce verify-failed 4 "verify-merge.sh failed on the merge with the new origin/$base (${base_sha:0:12}); log: $log"
+    verified_or_out "the new origin/$base"
 done
 merged=$(git rev-parse HEAD)
 

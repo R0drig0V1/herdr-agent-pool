@@ -17,7 +17,10 @@
 #   place for per-worktree setup such as `uv sync`, `pnpm install` or creating a private test
 #   database (worktrees must never share one: tests usually wipe it). It receives the branch
 #   name as $1. A failing setup only warns, so the worktree is still usable. It runs inside
-#   one of the machine's heavy slots (resource-budget.py run): installs are heavy too.
+#   one of the machine's light slots (resource-budget.py run --pool light): it never waits
+#   behind a test suite, yet a burst of new worktrees cannot all install at once.
+# - The fetch of the base branch is retried once after 5 s (a DNS hiccup must not start the
+#   worktree from a stale base).
 set -euo pipefail
 
 branch="${1:?usage: new-worktree.sh <type>/<short-kebab-name>}"
@@ -30,7 +33,9 @@ prefix=$("$config" --root "$repo_root" worktree_prefix)
 name="${branch#*/}"
 worktree="$(dirname "$repo_root")/${prefix}${name}"
 
-git -C "$repo_root" fetch --quiet origin "$base_branch" 2>/dev/null || true
+git -C "$repo_root" fetch --quiet origin "$base_branch" 2>/dev/null \
+    || { sleep 5; git -C "$repo_root" fetch --quiet origin "$base_branch" 2>/dev/null; } \
+    || echo "warning: git fetch origin $base_branch failed twice; starting from the last known base" >&2
 base=$base_branch
 git -C "$repo_root" rev-parse --verify --quiet "origin/$base_branch" >/dev/null && base="origin/$base_branch"
 
@@ -39,7 +44,7 @@ git -C "$repo_root" worktree add --no-track -b "$branch" "$worktree" "$base"
 [[ -f "$repo_root/.env" ]] && cp "$repo_root/.env" "$worktree/.env"
 
 if [[ -x "$worktree/scripts/worktree-setup.sh" ]]; then
-    (cd "$worktree" && "$(dirname "$0")/resource-budget.py" run --label "worktree-setup $branch" \
+    (cd "$worktree" && "$(dirname "$0")/resource-budget.py" run --pool light --label "worktree-setup $branch" \
         -- scripts/worktree-setup.sh "$branch") \
         || echo "warning: scripts/worktree-setup.sh failed; rerun it in $worktree" >&2
 fi

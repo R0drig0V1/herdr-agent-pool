@@ -22,9 +22,13 @@
 # 2. scripts/worktree-setup.sh, if present: install dependencies the PR may have added. It
 #    receives the project's base branch (project-config.py base_branch, default main) as $1.
 # 3. scripts/check.sh: lint, formatting, types and tests. A project without one only gets a
-#    warning, so configure it before trusting a VERIFY OK.
-# Steps 2 and 3 run inside one of the machine's heavy slots (resource-budget.py run), so they
-# may first wait for another agent's check to finish.
+#    warning, so configure it before trusting a VERIFY OK. It gets the project's
+#    `verify.check_env` variables, plus `verify.docs_only_env` when every path the merge
+#    changes (against HEAD) matches `verify.docs_only_paths` (project-config.py).
+# Step 2 runs in one of the machine's light slots and step 3 in one of its heavy slots, with
+# merge priority (resource-budget.py run): they may first wait for other agents' work. Exit
+# 120 means a step was interrupted while it waited for its slot: nothing was checked, which
+# is not a verdict on the merge (integrate-pr.sh requeues the PR without a bounce).
 #
 # Part of the multi-agent-herdr plugin (unchanged from multi-agent 0.1.0); the scripts above belong to the project and are resolved
 # from the repository of the current directory.
@@ -78,15 +82,33 @@ trap report_failure EXIT
 
 # The heavy steps hold one of the machine's heavy slots (resource-budget.py): with many
 # agents and integrators on one computer, at most `heavy_slots` of them run at once.
-heavy() { "$(dirname "$0")/resource-budget.py" run --label "verify-merge $repo_root" -- "$@"; }
+rb="$(dirname "$0")/resource-budget.py" pc="$(dirname "$0")/project-config.py"
+heavy() { "$rb" run --priority merge --label "verify-merge $repo_root" -- "$@"; }
+light() { "$rb" run --pool light --label "verify-merge setup $repo_root" -- "$@"; }
 failed_step="reset verification state"; reset_state
 if [[ -x scripts/worktree-setup.sh ]]; then
     failed_step="worktree setup"; step "$failed_step"
-    heavy scripts/worktree-setup.sh "$("$(dirname "$0")/project-config.py" --root "$main_root" base_branch)"
+    light scripts/worktree-setup.sh "$("$pc" --root "$main_root" base_branch)"
 fi
 failed_step="checks"; step "$failed_step"
+# The project's check variables (verify.check_env, plus verify.docs_only_env on a docs-only
+# merge), one NAME=value per line. An invalid settings file stops the verification here.
+vcfg=$("$pc" --root "$main_root" verify)
+check_env=()
+while IFS= read -r line; do
+    [[ -n "$line" ]] && check_env+=("$line")
+done < <(git diff --no-renames --name-only HEAD | python3 -c 'import fnmatch, json, sys
+cfg = json.loads(sys.argv[1])
+paths = [p for p in sys.stdin.read().splitlines() if p]
+pats = cfg["docs_only_paths"]
+env = dict(cfg["check_env"])
+if pats and paths and all(any(fnmatch.fnmatchcase(p, q) for q in pats) for p in paths):
+    print("docs-only merge: adding verify.docs_only_env", file=sys.stderr)
+    env.update(cfg["docs_only_env"])
+print("\n".join(f"{k}={v}" for k, v in env.items()))' "$vcfg")
+[[ ${#check_env[@]} -eq 0 ]] || echo "check environment: ${check_env[*]}"
 if [[ -x scripts/check.sh ]]; then
-    heavy scripts/check.sh
+    heavy env ${check_env[@]+"${check_env[@]}"} scripts/check.sh
 else
     echo "warning: scripts/check.sh not found; nothing was checked" >&2
 fi

@@ -137,7 +137,7 @@ ensure_worktree() {  # ensure_worktree <path>: a detached verify worktree at ori
     git -C "$main" worktree add --quiet --detach "$wt" "origin/$base" || die "git worktree add $wt failed" 2
     [[ -f "$main/.env" ]] && cp "$main/.env" "$wt/.env"
     if [[ -x "$wt/scripts/worktree-setup.sh" ]]; then
-        (cd "$wt" && "$dir/resource-budget.py" run --label "worktree-setup $wt" -- scripts/worktree-setup.sh "$base") \
+        (cd "$wt" && "$dir/resource-budget.py" run --pool light --label "worktree-setup $wt" -- scripts/worktree-setup.sh "$base") \
             || echo "warning: scripts/worktree-setup.sh failed in $wt; the member's first verification reruns it" >&2
     fi
 }

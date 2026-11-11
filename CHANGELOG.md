@@ -8,6 +8,36 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Lessons from the project's first night in pool mode (3 integrators, about 15 agents).
+
+### Added
+- `resource-budget.py`: a **priority queue** for slots. Waiters write tickets; a free slot goes
+  to `merge` (an integrator's `verify-merge.sh`), then `plan` (the coordinator's checks),
+  then `normal`, oldest first; a ticket waiting 20 min counts as `merge`. `--priority` is
+  honoured only for the matching `CLAUDE_ROLE`.
+- `resource-budget.py`: a **light pool** (`light_slots`, default 2) for worktree setup
+  (`new-worktree.sh`, `verify-merge.sh`, `integrator-pool.sh spawn`), so setup no longer waits
+  behind test suites.
+- `resource-budget.py status [--json]`: every holder of both pools (also those above a lowered
+  limit) and the waiters in turn order; `resource-board.sh show` prints it.
+- `$MULTI_AGENT_HERDR_SLOT_COUNT` for the command in a slot (the pool's limit at admission).
+- Project setting `verify` (`check_env`, `docs_only_paths`, `docs_only_env`): variables for
+  `scripts/check.sh` on merge verifications, e.g. a fast lane, and a docs-only lane.
+- `integrate-pr.sh` exit 13: the verification never ran (its wait for a slot was interrupted),
+  back to the queue without a bounce.
+- `integrate` skill: refresh claims, open PRs and the base after any pause; look for a recorded
+  decision before asking, and never wait at a dialog holding a PR (comment, bounce, tell the
+  coordinator, move on).
+
+### Fixed
+- `resource-budget.py run` read `heavy_slots` once: raising it never admitted a waiter (one PR
+  waited 40 min with a slot free) and lowering it never held new ones back. Every retry now
+  re-reads the limits, keeping the last good value when the file is half written.
+- `resource-board.sh show` listed only the slots below the current limit, hiding holders above
+  a lowered one.
+- `new-worktree.sh` retries the fetch of the base branch once (DNS hiccups).
+- Owner files and tickets are written atomically.
+
 ## [0.2.0] - 2026-11-09
 
 This release moved to its own repository,

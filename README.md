@@ -126,6 +126,7 @@ per-repository default applies):
 | `protected_branches` | `[]` | extra `fnmatch` patterns only the integrator may push; `main` and `base_branch` are always protected |
 | `worktree_prefix` | `<repo>-` | development worktrees are `../<worktree_prefix><name>` |
 | `coordinator_name` | `coordinator-<repo>` (same rule) | pool mode: the coordinator's herdr name (`scripts/coordinator.sh`) |
+| `verify` | every field empty | merge verifications: `check_env` (variables for `scripts/check.sh`, e.g. a fast lane), `docs_only_paths` and `docs_only_env` (added when every changed path matches) |
 | `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](docs/multi-integrator.md)) |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
@@ -145,12 +146,14 @@ Limits shared by every agent of every project on the computer, in
 2 heavy slots, a guideline of 12 sessions):
 
 ```json
-{"heavy_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
+{"heavy_slots": 2, "light_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
 ```
 
-Only `heavy_slots` is enforced: `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr`
-skills run the project's heavy scripts through `resource-budget.py run`, at most that many at
-once. Everything else is negotiated: agents note what they run on the resource board
+`heavy_slots` and `light_slots` are enforced: `verify-merge.sh` and the `commit`/`pr` skills
+run the project's checks through `resource-budget.py run`, at most `heavy_slots` at once, and
+worktree setup goes through the separate light pool. Waiters queue: merge verifications
+first, then the coordinator's checks, then everyone else, oldest first; a changed limit
+applies to waiters at once. Everything else is negotiated: agents note what they run on the resource board
 (`resource-board.sh note|clear|show|prune`), send `RESOURCE REQUEST`s to the coordinator,
 which answers `GO`, `WAIT` or `YIELD` and declares save mode when memory is low
 ([docs/multi-integrator.md](docs/multi-integrator.md), "Resources").
@@ -161,7 +164,7 @@ A project that never sets `integrators` keeps one integrator, but 0.2.0 still ch
 things for it:
 
 - `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills run the project's heavy
-  scripts through `resource-budget.py`. They may wait for a free heavy slot, and an invalid
+  scripts through `resource-budget.py`. They may wait for a free heavy (or light) slot, and an invalid
   `~/.config/multi-agent-herdr/resources.json` makes them fail.
 - `integrate` merges with `integrate-pr.sh`, and after a merge it cleans up the author's
   worktree with `cleanup-worktree.sh`.
@@ -244,7 +247,7 @@ their settings and keep it; `/multi-agent-herdr:setup` offers to remove the key.
 | Script | `integrate-pr.sh` | One PR, gated step by step: merge, `verify-merge.sh`, commit, push under the merge lock (re-verify when the base moved), branch deletion only when nothing moved; exit code = outcome |
 | Script | `pool-state.py` | Pool state in the git common dir: atomic PR claims, bounced heads, the merge lock (`lock run`), plan reports |
 | Script | `integrator-pool.sh` | `list`, `route` (who `pr` announces to), `scale` (facts and a suggestion; the coordinator decides), `spawn <n>`, `stop <n> [--remove-worktree]` |
-| Script | `resource-budget.py` | The hard floor: at most `heavy_slots` heavy commands at once on the machine (`run`), and the limits (`limits`) |
+| Script | `resource-budget.py` | The hard floor: at most `heavy_slots` heavy commands at once on the machine, in a priority queue (`run`), holders and waiters (`status`), and the limits (`limits`) |
 | Script | `resource-board.sh` | The shared resource sheet: agents `note` and `clear` what they run; `show` prints memory, slots, notes and idle agents |
 | Script | `cleanup-worktree.sh` | After a merge: `--list` the development worktrees and their state; `<branch>` closes the agent's workspace, removes the worktree and deletes the branches, only when merged (a merged PR, tip in the base), clean and idle |
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys) |

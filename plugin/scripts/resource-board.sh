@@ -7,8 +7,8 @@
 # when it stops, it clears the line. The coordinator reads the board to grant turns, set
 # priorities, declare save mode and decide how many integrators the machine can carry, and the
 # user reads it to see what is eating the computer. The hard floor underneath is
-# resource-budget.py (at most `heavy_slots` heavy commands at once), whose current holders the
-# board also shows.
+# resource-budget.py (at most `heavy_slots` heavy commands at once), whose holders (also those
+# above a lowered limit) and queued waiters the board also shows.
 #
 # The board is machine-wide (every project of the user), one file per agent under
 # ${MULTI_AGENT_HERDR_RESOURCES_DIR:-~/.cache/multi-agent-herdr/resources}/board/, so agents
@@ -110,7 +110,7 @@ cmd_prune() {
 }
 
 cmd_show() {
-    local lim total avail slots guideline low agents f owner pid i n used=0 now
+    local lim total avail slots guideline low agents f n used now
     now=$(date +%s)
     lim=$("$dir/resource-budget.py" limits 2>/dev/null) || lim='{"heavy_slots": 1, "sessions_guideline": 0, "low_memory_gb": 0, "source": "invalid resources.json"}'
     slots=$(jq -r .heavy_slots <<<"$lim"); guideline=$(jq -r .sessions_guideline <<<"$lim"); low=$(jq -r .low_memory_gb <<<"$lim")
@@ -127,19 +127,9 @@ cmd_show() {
     echo "- Live herdr agents: $n (guideline for this machine: $guideline)$([[ "$n" != "?" && "$n" -gt "$guideline" ]] && echo " - **over the guideline**")"
     echo "- Limits: $(jq -r .source <<<"$lim")"
     echo
-    echo "## Heavy slots (hard limit: $slots at once)"
-    echo
-    for ((i = 0; i < slots; i++)); do
-        owner=$(cat "$state/slot-$i.json" 2>/dev/null) || owner=""
-        pid=$(jq -r '.pid // empty' <<<"$owner" 2>/dev/null)
-        if [[ -n "$owner" && -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            used=$((used + 1))
-            echo "- slot $i: $(jq -r '"\(.label) - \(.agent // "?") in \(.cwd)"' <<<"$owner"), for $(ago "$(jq -r .since <<<"$owner")")"
-        else
-            echo "- slot $i: free"
-        fi
-    done
-    echo
+    # Every holder, also those above a lowered limit, and the waiters in turn order.
+    "$dir/resource-budget.py" status 2>/dev/null || echo "(slot status unavailable: resource-budget.py status failed)"
+    used=$("$dir/resource-budget.py" status --json 2>/dev/null | jq '.heavy.holders | length' 2>/dev/null) || used="?"
     echo "## Notes ($used of $slots heavy slots in use)"
     echo
     echo "| agent | running | est. GB | for | until | where |"

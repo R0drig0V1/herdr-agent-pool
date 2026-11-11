@@ -661,6 +661,83 @@ echo '{"heavy_slots": 0}' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
 check "resource-budget: rejects an invalid limit" exits 1 "$rb" limits
 echo '{"heavy_slot": 2}' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
 check "resource-budget: rejects an unknown key" exits 1 "$rb" limits
+
+# The queue: limits re-read on every retry, priority order, lowered limits, interruptions.
+slots() { printf '{"heavy_slots": %s, "light_slots": 1, "sessions_guideline": 50, "low_memory_gb": 0}\n' "$1" > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"; }
+until_true() { for _ in $(seq 1 100); do "$@" && return 0; sleep 0.1; done; return 1; }
+queued() { [[ $(ls "$MULTI_AGENT_HERDR_RESOURCES_DIR/queue-heavy" 2>/dev/null | wc -l) -ge $1 ]]; }
+held() { "$rb" status --json | jq -e --argjson n "$1" '.heavy.holders | length == $n' >/dev/null; }
+release_file="$work/release"; rm -f "$release_file"
+hold() { "$rb" run --label "$1" -- sh -c "until [ -e '$release_file.$1' ]; do sleep 0.1; done" 2>/dev/null & }
+slots 1
+hold h1; until_true held 1
+"$rb" run --label w1 -- true 2>/dev/null & waiter=$!
+until_true queued 1
+slots 2
+check "resource-budget: a raised limit admits a waiter that is already waiting" until_true not kill -0 "$waiter"
+touch "$release_file.h1"; wait
+rm -f "$release_file".*; : > "$order"
+slots 1
+hold h2; until_true held 1
+"$rb" run --label normal -- sh -c "echo normal >> '$order'" 2>/dev/null &
+until_true queued 1
+env CLAUDE_ROLE=integrator "$rb" run --priority merge --label merge -- sh -c "echo merge >> '$order'" 2>/dev/null &
+until_true queued 2
+check "resource-board: lists the waiters in turn order" \
+    bash -c '[[ "$("$1" show)" == *"waiting #1: merge"*"waiting #2: normal"* ]]' _ "$board"
+touch "$release_file.h2"; wait
+check "resource-budget: a merge verification goes before an earlier normal check" [ "$(tr '\n' ' ' < "$order")" == "merge normal " ]
+out=$(env CLAUDE_ROLE= "$rb" run --priority merge -- true 2>&1)
+check "resource-budget: merge priority outside an integrator is queued as normal" bash -c '[[ "$1" == *"queued as normal"* ]]' _ "$out"
+rm -f "$release_file".*
+slots 2
+hold h3; until_true held 1; hold h4; until_true held 2
+slots 1
+touch "$release_file.h3"; until_true held 1
+check "resource-budget: a lowered limit counts the holder above it (no new admission)" exits 124 "$rb" run --timeout 1 -- true
+check "resource-board: flags a holder above the lowered limit" \
+    bash -c '[[ "$("$1" show)" == *"slot 1: h4"*"above the current limit"* ]]' _ "$board"
+check "resource-budget: the light pool does not wait behind heavy holders" "$rb" run --pool light --timeout 2 -- true
+check "resource-budget: the command learns the pool's limit" \
+    bash -c '[[ "$("$1" run --pool light -- sh -c "echo \$MULTI_AGENT_HERDR_SLOT_COUNT")" == 1 ]]' _ "$rb"
+"$rb" run --label w2 -- true 2>/dev/null & waiter=$!
+until_true queued 1
+echo '{"heavy_slots": ' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"   # half written
+sleep 2.5
+check "resource-budget: a half-written limits file keeps the waiter waiting" kill -0 "$waiter"
+kill -TERM "$waiter"; wait "$waiter"; rc=$?
+check "resource-budget: a waiter stopped by SIGTERM exits 120 (the command never ran)" [ "$rc" == 120 ]
+check "resource-budget: the stopped waiter's ticket is gone" not queued 1
+slots 1; touch "$release_file.h4"; wait; rm -f "$release_file".*
+
+# verify-merge.sh: the project's check variables, and exit 120 when the check never ran.
+vm="$work/vm"; git init --quiet -b main "$vm"; mkdir -p "$vm/.claude" "$vm/scripts" "$vm/docs" "$vm/src"
+cat > "$vm/scripts/check.sh" <<'SH'
+#!/usr/bin/env bash
+echo "scope=${SCOPE:-} docs=${DOCS:-}" > "$VM_OUT"
+SH
+chmod +x "$vm/scripts/check.sh"
+echo '{"verify": {"check_env": {"SCOPE": "fast"}, "docs_only_paths": ["docs/*"], "docs_only_env": {"DOCS": "1"}}}' > "$vm/.claude/multi-agent-herdr.json"
+echo a > "$vm/docs/a.md"; echo a > "$vm/src/a.py"
+git -C "$vm" add -A && git -C "$vm" commit --quiet -m init
+vmrun() { (cd "$vm" && env VM_OUT="$work/vm-out" "$scripts/verify-merge.sh" >/dev/null 2>&1); }
+echo b >> "$vm/docs/a.md"; git -C "$vm" add -A
+vmrun
+check "verify-merge: check_env plus docs_only_env on a docs-only change" [ "$(cat "$work/vm-out")" == "scope=fast docs=1" ]
+echo b >> "$vm/src/a.py"; git -C "$vm" add -A
+vmrun
+check "verify-merge: only check_env when code changed too" [ "$(cat "$work/vm-out")" == "scope=fast docs=" ]
+echo '{"verify": {"check_env": {"CLAUDE_ROLE": "integrator"}}}' > "$vm/.claude/multi-agent-herdr.json"
+check "project-config: refuses an identity variable in verify.check_env" exits 1 "$scripts/project-config.py" --root "$vm"
+echo '{"verify": {"check_env": {"SCOPE": 1}}}' > "$vm/.claude/multi-agent-herdr.json"
+check "project-config: refuses a non-string check variable" exits 1 "$scripts/project-config.py" --root "$vm"
+echo '{}' > "$vm/.claude/multi-agent-herdr.json"
+hold h5; until_true held 1
+(cd "$vm" && env VM_OUT="$work/vm-out" "$scripts/verify-merge.sh" >/dev/null 2>&1) & vmpid=$!
+until_true queued 1
+kill -TERM "$(jq -r .pid "$MULTI_AGENT_HERDR_RESOURCES_DIR"/queue-heavy/*.json)"; wait "$vmpid"; rc=$?
+check "verify-merge: exit 120 when its wait for a slot is interrupted" [ "$rc" == 120 ]
+touch "$release_file.h5"; wait; rm -f "$release_file".*
 budget 50
 
 # integrator-pool.sh ---------------------------------------------------------------------------

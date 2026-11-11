@@ -35,6 +35,15 @@ Keys (all optional; a missing file means every default):
   `POOL_MAX`), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30),
   `claim_ttl_minutes` (60), `max_reverify` (3) and `reverify_exempt_paths`
   (`["docs/phases/*.md"]`, fnmatch patterns; `[]` when a check reads the plan).
+* `verify` (default: every field empty): how `verify-merge.sh` runs the project's
+  `scripts/check.sh` on a merge. Its keys, all optional:
+  `check_env` (`{}`): variables added to the check's environment on every merge
+  verification, e.g. `{"PROJECT_CHECK_SCOPE": "fast"}` for a fast lane while promotions
+  run the full check; `docs_only_paths` (`[]`, fnmatch patterns) and `docs_only_env` (`{}`):
+  when every path the merge changes matches `docs_only_paths`, `docs_only_env` is added on
+  top of `check_env` (a docs-only fast lane; off while `docs_only_paths` is empty). Names
+  must look like `[A-Za-z_][A-Za-z0-9_]*` and may not start with `CLAUDE_`, `HERDR_` or
+  `MULTI_AGENT_HERDR_` (identity variables); values are strings without newlines.
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -81,6 +90,9 @@ POOL_DEFAULTS: dict[str, Any] = {
     "max_reverify": 3,
     "reverify_exempt_paths": ["docs/phases/*.md"],
 }
+VERIFY_DEFAULTS: dict[str, Any] = {"check_env": {}, "docs_only_paths": [], "docs_only_env": {}}
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+RESERVED_ENV = ("CLAUDE_", "HERDR_", "MULTI_AGENT_HERDR_")
 DERIVED = ("mode", "integrator_pool")
 
 
@@ -144,6 +156,7 @@ def defaults(root: str) -> dict[str, Any]:
         "worktree_prefix": os.path.basename(os.path.normpath(root)) + "-",
         "coordinator_name": default_coordinator_name(root),
         "integrators": None,
+        "verify": {k: type(v)() for k, v in VERIFY_DEFAULTS.items()},
         "mode": "single",
         "integrator_pool": [],
     }
@@ -173,6 +186,39 @@ def _pool_settings(path: str, value: Any) -> dict[str, Any]:
     return pool
 
 
+def _env_map(path: str, key: str, value: Any) -> dict[str, str]:
+    """A validated `{NAME: "value"}` object of `verify` (raises ConfigError)."""
+    if not isinstance(value, dict):
+        raise ConfigError(f'{path}: verify.{key} must be an object of NAME: "value"')
+    for name, item in value.items():
+        if not ENV_NAME.fullmatch(name) or name.startswith(RESERVED_ENV):
+            raise ConfigError(f"{path}: verify.{key}: {name!r} is not a usable variable name")
+        if not isinstance(item, str) or "\n" in item or "\0" in item:
+            raise ConfigError(f"{path}: verify.{key}.{name} must be a one-line string")
+    return dict(value)
+
+
+def _verify_settings(path: str, value: Any) -> dict[str, Any]:
+    """Validated `verify` object with its defaults filled in (raises ConfigError)."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: verify must be an object, got {value!r}")
+    result: dict[str, Any] = {k: type(v)() for k, v in VERIFY_DEFAULTS.items()}
+    for key, item in value.items():
+        if key.startswith("$"):
+            continue
+        if key not in VERIFY_DEFAULTS:
+            raise ConfigError(
+                f"{path}: unknown key verify.{key} (known: {', '.join(VERIFY_DEFAULTS)})"
+            )
+        if key == "docs_only_paths":
+            if not isinstance(item, list) or not all(isinstance(v, str) and v for v in item):
+                raise ConfigError(f"{path}: verify.docs_only_paths must be a list of patterns")
+            result[key] = list(item)
+        else:
+            result[key] = _env_map(path, key, item)
+    return result
+
+
 def valid_branch(name: str) -> bool:
     """Whether `name` is a usable branch name (`git check-ref-format --branch` rules, offline)."""
     return bool(
@@ -196,6 +242,8 @@ def _checked(path: str, key: str, value: Any) -> Any:
             raise ConfigError(f"{path}: {key} must match [a-z][a-z0-9_-]{{0,31}}, got {value!r}")
     elif key == "integrators":
         return _pool_settings(path, value)
+    elif key == "verify":
+        return _verify_settings(path, value)
     elif key == "protected_branches":
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
             raise ConfigError(f"{path}: protected_branches must be a list of patterns")
