@@ -40,6 +40,9 @@ enable that one in the same project either.
 
 ## How it works
 
+For the architecture (components, information flows, shared state and the design rules), see
+[plugin/README.md](plugin/README.md).
+
 Pool mode, one task from request to cleanup. Solid arrows are actions, dashed ones herdr
 messages. Single mode is the same flow, with one integrator in the main worktree that also
 plays the coordinator's part.
