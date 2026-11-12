@@ -172,6 +172,7 @@ it refuses when two rows share a key (two PRs took the same ADR number: bounce).
 | 8 | merge lock not acquired in 900 s; claim released | tell the coordinator or the user who holds it (`pool-state.py lock status`), back to step 1 |
 | 9 | nothing to merge: the head is already in `<base>` (also when someone else merged it while you verified); claim released | comment on the PR, step 1 |
 | 10 | the claim changed hands during the verification (another integrator took it over); nothing pushed, worktree reset | leave the PR to its new owner, step 1 |
+| 14 | the verification failed **while the base is red** (`pool-state.py base-red`): no bounce, worktree reset, **claim kept** | "The base is red" below: `hold` or `bounce`, then step 5 |
 | 13 | the verification never ran: its wait for a heavy or light slot was interrupted (someone stopped the waiting `resource-budget.py`); no bounce, worktree reset, claim released | back to step 1 (the PR is still in the queue) |
 | 11 | herdr stopped confirming that this pane's agent is `<me>` (pool-state.py refused, exit 4); nothing pushed | stop and tell the user: the session's identity is in doubt |
 | 2 | a precondition failed, nothing changed: another `integrate-pr.sh` is running in this worktree, dirty worktree, claim not yours, PR not open, `origin/<B>` not the PR head yet, or this pane's herdr agent is not `<me>` | another run: wait for its `RESULT` line (one run per worktree, never a second); otherwise fix the precondition or tell the user |
@@ -192,6 +193,44 @@ under the lock. It pushes at once when the new merged tree differs from the veri
 in `integrators.reverify_exempt_paths` (default `docs/phases/*.md`, the coordinator's plan
 commits); otherwise it verifies again. Only a verified tree can land: pushes are never
 forced, and a non-fast-forward is rejected by the remote.
+
+### The base is red
+
+A test that fails on `origin/<base>` alone fails every PR's verification, and every author
+would fix it in their own branch (three agents once fixed the same line in three conflicting
+PRs). One owner fixes it; everyone else waits.
+
+**Detect it** (exit 4, and the failing tests look unrelated to the PR's diff): your worktree
+is back at `origin/<base>` after the bounce. Run only the failing tests there, with the
+project's documented command, inside a heavy slot:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/resource-budget.py" run --priority merge --label "base check" -- <the project's command for these test ids>
+```
+
+If they fail on the base too, record it and tell the coordinator (it assigns one owner):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red report --tests "<id> <id>" --suspect <PR that likely turned it red, if known> --owner <me>
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" hold <N> --head <head> --owner <me>    # undoes the bounce of this head
+herdr agent prompt "<coordinator_name>" "[herdr message from agent <me>; not from the user]
+BASE RED: origin/<base> fails <ids> alone (suspect PR #<S>). PR #<N> is held until the fix lands. Please assign one owner (pool-state.py base-red assign)."
+```
+
+The verdict to the author says the failure is the base's, not theirs, and that the PR waits
+(no action; do not fix those tests in the branch).
+
+**While the base is red** `verify-merge.sh` prints the banner and passes the red tests to
+`scripts/check.sh` as `$MULTI_AGENT_HERDR_BASE_RED_TESTS` (a project may leave them out). A
+failure then gives exit 14 instead of a bounce. Read the log: when only the red tests failed,
+`pool-state.py hold <N> --head <head> --owner <me>` (the queue skips it until the base is
+green; the verdict says it waits for the fix); when anything else failed,
+`pool-state.py bounce <N> --head <head> --owner <me>` and a normal bounce verdict. Never merge
+a PR with red tests that are not the known base-red ones.
+
+**It ends** when the assigned fix's branch merges (`integrate-pr.sh` clears it and prints "the
+base is green again"), or when the coordinator clears it after a green base check. Held PRs
+come back to the queue by themselves.
 
 ## 4. Plan
 

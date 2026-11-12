@@ -203,6 +203,29 @@ Discarding finished worktrees is also the cheapest way to give the machine memor
 one keeps a Claude session alive until its workspace is closed. When the pool shrinks for
 good, `integrator-pool.sh stop <n> --remove-worktree` discards a member's verify worktree too.
 
+### The base is red
+
+An integrator that finds tests failing on `origin/<base>` alone records it (`pool-state.py
+base-red report`) and sends you `BASE RED: ...`. Name **one** owner of the fix, so nobody else
+fixes it in their branch: an agent already on it, or dispatch a fix task (`dispatch`), then
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show                      # the banner
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red assign <agent> --branch <its branch>
+```
+
+Tell that agent it owns the fix. Every `commit`, `pr` and merge verification prints the
+banner meanwhile, and integrators hold the PRs that fail only on those tests. The entry clears
+by itself when the fix's branch merges. When a full base check (your promotion check) is green
+first, clear it yourself; held PRs return to the queue:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red clear --owner <me> --reason "<check> green on <sha>"
+```
+
+A promotion check that fails on the base alone is a red base too: `base-red report` it
+yourself with the failing tests.
+
 ## 4. Development agents
 
 - **Dispatch** with `/multi-agent-herdr:dispatch <type>/<name> <task>`: in pool mode it is

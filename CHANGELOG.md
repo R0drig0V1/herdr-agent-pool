@@ -41,6 +41,10 @@ Lessons from the project's first night in pool mode (3 integrators, about 15 age
 - Project setting `numbered_files` and `pool-state.py reserve` / `unreserve` / `reservations`:
   migration and ADR numbers handed out per branch, so parallel branches never pick the same one;
   the `dispatch` skill reserves them and writes them in the brief.
+- "Base is red" notice: `pool-state.py base-red report|assign|clear|show` and `hold`. One owner
+  fixes a base that fails on its own; `commit`, `pr` and `verify-merge.sh` print the banner
+  (`$MULTI_AGENT_HERDR_BASE_RED_TESTS` for `scripts/check.sh`); `integrate-pr.sh` exit 14
+  instead of a bounce while red; merging the assigned fix clears it.
 - `integrate` skill: refresh claims, open PRs and the base after any pause; look for a recorded
   decision before asking, and never wait at a dialog holding a PR (comment, bounce, tell the
   coordinator, move on).

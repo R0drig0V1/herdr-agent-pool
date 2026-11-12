@@ -14,6 +14,10 @@ dir; this script keeps the pool's state there, in `<git common dir>/multi-agent-
     reports/done/pr-<N>.json   them (`report done`), so a coordinator that was down catches up
     members/<name>.activity    touched on every claim, release and bounce (scale-down idleness)
     reservations/<kind>.json   numbers handed out by `reserve` (project setting numbered_files)
+    base-red.json              the base branch is red: failing tests, suspect PR, the one
+                               owner of the fix (absent while the base is green)
+    base-red.log               one line per cleared red period
+    held/pr-<N>.json           a PR that waits for the base fix (skipped by `queue` while red)
 
 Commands:
 
@@ -42,6 +46,19 @@ Commands:
     unreserve --owner BRANCH [--kind KIND] [--number N]
                                         give back BRANCH's reservations (all, or one)
     reservations                        one line per reservation: kind number owner age-s
+    base-red report --tests "ID ..." --owner NAME [--suspect PR] [--base BRANCH]
+                                        record that origin/<base> fails these tests alone
+                                        (merged into an existing entry)
+    base-red assign AGENT [--branch BRANCH]
+                                        the coordinator names the one owner of the fix (and the
+                                        fix's branch: its merge clears the entry)
+    base-red clear --owner NAME --reason TEXT [--if-branch BRANCH]
+                                        the base is green again (exit 3, nothing cleared, when
+                                        --if-branch is not the fix's branch); releases held PRs
+    base-red show [--json | --tests]    the banner while red, nothing while green (exit 0)
+    hold N --head SHA --owner NAME      park a PR whose verification failed only on the red
+                                        tests until the base is green (releases the claim and
+                                        undoes a bounce of that head)
 
 A reservation ends when its number lands on origin/<base> (the next `reserve` prunes it), when
 `integrate-pr.sh` merges its branch, or with `unreserve`. Reservations are cooperative (no
@@ -185,11 +202,14 @@ def identity_problem(args: argparse.Namespace, config: dict[str, Any]) -> str | 
     if config["mode"] != "pool":
         return None
     pool, coordinator = set(config["integrator_pool"]), config["coordinator_name"]
-    sub = getattr(args, "lock_cmd", None) or getattr(args, "report_cmd", None)
+    sub = next((getattr(args, a) for a in ("lock_cmd", "report_cmd", "base_red_cmd")
+                if getattr(args, a, None)), None)  # fmt: skip
     allowed = {
         ("claim", None): pool, ("release", None): pool, ("heartbeat", None): pool,
         ("bounce", None): pool, ("lock", "run"): pool | {coordinator},
-        ("report", "add"): pool, ("report", "done"): {coordinator},
+        ("report", "add"): pool, ("report", "done"): {coordinator}, ("hold", None): pool,
+        ("base-red", "report"): pool | {coordinator}, ("base-red", "assign"): {coordinator},
+        ("base-red", "clear"): pool | {coordinator},
     }.get((args.cmd, sub))  # fmt: skip
     if allowed is None:
         return None  # read-only commands, and `activity`
@@ -239,7 +259,7 @@ class State:
         self.root = root
         self.ttl = ttl_minutes * 60
         self._live: set[str] | None | bool = False  # False: not asked yet
-        for sub in ("claims", "bounced", "lock", "reports/done", "members", "reservations"):
+        for sub in ("claims", "bounced", "lock", "reports/done", "members", "reservations", "held"):
             os.makedirs(os.path.join(root, sub), exist_ok=True)
 
     def path(self, *parts: str) -> str:
@@ -407,12 +427,36 @@ class State:
         number = int(pr["number"])
         if pr.get("headRefOid") and self.bounced_head(number) == pr["headRefOid"]:
             return None
+        if self.held_head(number) == pr.get("headRefOid") and self.base_red() is not None:
+            return None
         owner = self.owner_of(number)
         if owner is None:
             return "free"
         if name and owner.get("owner") == name:
             return "mine"
         return "stale" if self.is_stale(number, owner) else None
+
+    # The base is red ------------------------------------------------------------------------
+
+    def base_red(self) -> dict[str, Any] | None:
+        return read_json(self.path("base-red.json"))
+
+    def held_head(self, pr: int) -> str | None:
+        return (read_json(self.path("held", f"pr-{pr}.json")) or {}).get("head")
+
+    def _hold(self, pr: int, head: str, name: str) -> tuple[int, str]:
+        if self.base_red() is None:
+            return 1, f"PR #{pr}: the base is not red; bounce or merge it instead"
+        write_json(self.path("held", f"pr-{pr}.json"), {"pr": pr, "head": head, "owner": name,
+                                                        "at": time.time()})  # fmt: skip
+        if self.bounced_head(pr) == head:  # the failure was the base's, not the PR's
+            os.remove(self.path("bounced", f"pr-{pr}.json"))
+        self._release(pr, name)
+        return 0, f"PR #{pr}: held at {head[:12]} until the base is green"
+
+    def hold(self, pr: int, head: str, name: str) -> tuple[int, str]:
+        with self.claims_lock():
+            return self._hold(pr, head, name)
 
     # Plan reports ---------------------------------------------------------------------------
 
@@ -553,6 +597,62 @@ def reservations(state: State) -> int:
     return 0
 
 
+# The base is red -------------------------------------------------------------------------------
+
+
+def banner(entry: dict[str, Any]) -> str:
+    since = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(entry.get("since", 0))))
+    owner = entry.get("owner") or "nobody yet (the coordinator assigns one)"
+    suspect = f"; suspect PR #{entry['suspect']}" if entry.get("suspect") else ""
+    return (
+        f"BASE {entry.get('base', '?')} IS RED since {since}: {' '.join(entry.get('tests', []))}"
+        f"{suspect}; fix assigned to {owner}. Do NOT fix it in your branch: rebase after the fix"
+        " lands."
+    )
+
+
+def base_red(state: State, args: argparse.Namespace, config: dict[str, Any]) -> int:
+    path, entry, now = state.path("base-red.json"), state.base_red(), time.time()
+    if args.base_red_cmd == "show":
+        if entry is not None:
+            out = {"json": json.dumps(entry), "tests": " ".join(entry.get("tests", []))}
+            print(out.get(args.format, banner(entry)))
+        elif args.format == "json":
+            print("{}")
+        return 0
+    if args.base_red_cmd == "report":
+        entry = entry or {"base": args.base or config["base_branch"], "since": now, "tests": []}
+        entry["tests"] = list(dict.fromkeys([*entry["tests"], *args.tests.split()]))
+        entry.update({"reported_by": args.owner, "updated": now})
+        entry.update({"suspect": args.suspect} if args.suspect else {})
+        write_json(path, entry)
+        print(banner(entry))
+        return 0
+    if entry is None:
+        print("pool-state: the base is not red", file=sys.stderr)
+        return 1
+    if args.base_red_cmd == "assign":
+        entry.update({"owner": args.agent, "fix_branch": args.branch, "updated": now})
+        write_json(path, entry)
+        print(banner(entry))
+        return 0
+    return clear_base_red(state, args, entry)
+
+
+def clear_base_red(state: State, args: argparse.Namespace, entry: dict[str, Any]) -> int:
+    if args.if_branch and entry.get("fix_branch") != args.if_branch:
+        return EXIT_HELD
+    with state.claims_lock():
+        os.remove(state.path("base-red.json"))
+        for held in os.listdir(state.path("held")):
+            os.remove(state.path("held", held))
+    line = {**entry, "cleared": time.time(), "cleared_by": args.owner, "reason": args.reason}
+    with open(state.path("base-red.log"), "a") as f:
+        f.write(json.dumps(line) + "\n")
+    print(f"base {entry.get('base', '?')} is green again ({args.reason}); held PRs released")
+    return 0
+
+
 # The merge lock -------------------------------------------------------------------------------
 
 
@@ -673,6 +773,12 @@ def parser() -> argparse.ArgumentParser:
     for name in ("activity", "idle-seconds"):
         sub.add_parser(name).add_argument("name")
     sub.add_parser("whoami")
+    add_numbers_and_base_red(sub)
+    return p
+
+
+def add_numbers_and_base_red(sub: Any) -> None:
+    """The parsers of reserve, unreserve, reservations, hold and base-red."""
     res = sub.add_parser("reserve")
     res.add_argument("kind")
     res.add_argument("--owner", required=True, help="the branch the number is for")
@@ -682,7 +788,27 @@ def parser() -> argparse.ArgumentParser:
     unres.add_argument("--kind", default="")
     unres.add_argument("--number", type=int)
     sub.add_parser("reservations")
-    return p
+    hold = sub.add_parser("hold")
+    hold.add_argument("pr", type=int)
+    hold.add_argument("--head", required=True)
+    hold.add_argument("--owner", required=True)
+    red = sub.add_parser("base-red").add_subparsers(dest="base_red_cmd", required=True)
+    red_report = red.add_parser("report")
+    red_report.add_argument("--tests", required=True, help="the failing test ids, space-separated")
+    red_report.add_argument("--owner", required=True)
+    red_report.add_argument("--suspect", default="", help="the PR that probably turned it red")
+    red_report.add_argument("--base", default="")
+    red_assign = red.add_parser("assign")
+    red_assign.add_argument("agent")
+    red_assign.add_argument("--branch", default="", help="the fix's branch: its merge clears")
+    red_clear = red.add_parser("clear")
+    red_clear.add_argument("--owner", required=True)
+    red_clear.add_argument("--reason", required=True)
+    red_clear.add_argument("--if-branch", default="")
+    red_show = red.add_parser("show")
+    fmt = red_show.add_mutually_exclusive_group()
+    fmt.add_argument("--json", dest="format", action="store_const", const="json")
+    fmt.add_argument("--tests", dest="format", action="store_const", const="tests")
 
 
 def queue(state: State, base: str, name: str) -> int:
@@ -787,6 +913,12 @@ def main() -> int:
     state = State(root, int(config["integrators"]["claim_ttl_minutes"]))
     if args.cmd == "reserve":
         return reserve(state, args, config)
+    if args.cmd == "base-red":
+        return base_red(state, args, config)
+    if args.cmd == "hold":
+        code, message = state.hold(args.pr, args.head, args.owner)
+        print(message, file=sys.stdout if code == 0 else sys.stderr)
+        return code
     if args.cmd in ("unreserve", "reservations"):
         return unreserve(state, args) if args.cmd == "unreserve" else reservations(state)
     return run(state, args)

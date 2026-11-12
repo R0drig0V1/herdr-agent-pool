@@ -91,6 +91,14 @@ if [[ -x scripts/worktree-setup.sh ]]; then
     light scripts/worktree-setup.sh "$("$pc" --root "$main_root" base_branch)"
 fi
 failed_step="checks"; step "$failed_step"
+# A red base (pool-state.py base-red): say so, and hand the known-red tests to check.sh, which
+# may leave them out ($MULTI_AGENT_HERDR_BASE_RED_TESTS, space-separated; the project decides).
+red=$("$(dirname "$0")/pool-state.py" base-red show 2>/dev/null || true)
+if [[ -n "$red" ]]; then
+    echo "$red"
+    MULTI_AGENT_HERDR_BASE_RED_TESTS=$("$(dirname "$0")/pool-state.py" base-red show --tests 2>/dev/null || true)
+    export MULTI_AGENT_HERDR_BASE_RED_TESTS
+fi
 # The project's check variables (verify.check_env, plus verify.docs_only_env on a docs-only
 # merge), one NAME=value per line. A variable the caller exported wins (for example
 # PROJECT_CHECK_SCOPE=full for a full-scope merge verification). An invalid settings file

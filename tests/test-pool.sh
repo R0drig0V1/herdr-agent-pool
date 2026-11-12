@@ -258,6 +258,9 @@ CLAUDE_ROLE=integrator  expect 0 "guard: a pool integrator runs integrate-pr.sh"
 CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator spawns members"      "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$wt1")"
 CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator runs the pool watcher" "$g" "$(bash_cmd "$scripts/integrator-pool.sh watch" "$wt1")"
 expect 0 "guard: a developer reserves a number"     "$g" "$(bash_cmd "$ps reserve adr --owner feat/x" "$d1")"
+expect 2 "guard: a developer reports a red base"   "$g" "$(bash_cmd "$ps base-red report --tests t --owner x" "$d1")"
+expect 0 "guard: a developer reads the red-base banner" "$g" "$(bash_cmd "$ps base-red show" "$d1")"
+expect 2 "guard: a developer holds a PR"          "$g" "$(bash_cmd "$ps hold 3 --head x --owner x" "$d1")"
 CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator spawns members"        "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$proj")"
 CLAUDE_ROLE=coordinator expect 0 "guard: the coordinator cleans up"             "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh feat/x" "$proj")"
 for push in "git push --force origin HEAD:main" "git push origin +HEAD:main" "git push origin --delete main" \
@@ -648,6 +651,43 @@ check "integrate-pr: the last re-verify runs under the merge lock and merges" \
 check "integrate-pr: the merge lock is held during that verification" grep -q "held by" "$work/locked.status"
 check "integrate-pr: both changes are on main" bash -c 'git -C "$1" cat-file -e main:src/locked.txt && git -C "$1" cat-file -e main:src/twentythree.txt' _ "$origin"
 printf '%s\n' "$cfg_saved" > "$cfg_json"
+
+# The base is red (pool-state.py base-red, hold; integrate-pr.sh exit 14) -----------------------
+as_me() { (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ps" "$@"); }
+as_coord() { (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w1:p1 HERDR_PANE_ID=w1:p1 "$ps" "$@"); }
+red_banner() { (cd "$proj" && "$ps" base-red show); }
+agents "$me" w2:p1 idle "$wt1"  coordinator-proj w1:p1 idle "$proj"
+check "base-red: nothing while the base is green" [ -z "$(red_banner)" ]
+as_me base-red report --tests "tests/test_a.py::t1" --suspect 21 --owner "$me" >/dev/null
+as_me base-red report --tests "tests/test_b.py::t2 tests/test_a.py::t1" --owner "$me" >/dev/null
+check "base-red: the banner merges the tests, names the suspect, no owner yet" \
+    bash -c '[[ "$1" == "BASE main IS RED since "*": tests/test_a.py::t1 tests/test_b.py::t2; suspect PR #21; fix assigned to nobody yet"* ]]' _ "$(red_banner)"
+check "base-red: a pool member may not assign the fix (exit 4)" exits 4 as_me base-red assign "$me"
+as_coord base-red assign dev-fix --branch feat/fixred >/dev/null
+check "base-red: the coordinator assigns one owner" bash -c '[[ "$1" == *"fix assigned to dev-fix."* ]]' _ "$(red_banner)"
+check "base-red: clear --if-branch of another branch clears nothing (exit 3)" \
+    exits 3 as_me base-red clear --owner "$me" --reason x --if-branch feat/other
+make_pr 24 feat/red24 fail.txt red
+printf '#!/usr/bin/env bash\necho "${MULTI_AGENT_HERDR_BASE_RED_TESTS:-}" > "%s/red-env"\n' "$work" > "$work/hook-red.sh"
+chmod +x "$work/hook-red.sh"; export CHECK_HOOK="$work/hook-red.sh"
+integrate 24
+head24=$(git -C "$origin" rev-parse refs/heads/feat/red24)
+check "integrate-pr: a failure while the base is red is exit 14, not a bounce" \
+    bash -c '[[ $1 == 14 && "$2" == *"BASE main IS RED"* && "$2" == *"RESULT base-red"* && ! -e "$3/bounced/pr-24.json" ]]' \
+    _ "$rc" "$out" "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr"
+check "integrate-pr: the claim is kept after exit 14" bash -c '[[ "$1" == *"24	$2"* ]]' _ "$(cd "$proj" && "$ps" claims)" "$me"
+check "verify-merge: check.sh gets the red tests" [ "$(cat "$work/red-env")" == "tests/test_a.py::t1 tests/test_b.py::t2" ]
+jq -n --arg h "$head24" '[{number: 24, title: "PR 24", headRefName: "feat/red24", headRefOid: $h, isDraft: false, createdAt: "2026-01-01T00:00:00Z"}]' > "$FAKE_GH/list.json"
+as_me hold 24 --head "$head24" --owner "$me" >/dev/null
+check "hold: the claim is released and the queue skips the held PR" \
+    bash -c '[[ -z "$1" && "$2" != *"24	"* ]]' _ "$(cd "$proj" && "$ps" claims)" "$(cd "$proj" && "$ps" queue --base main)"
+make_pr 25 feat/fixred src/fixred.txt fix
+integrate 25
+check "integrate-pr: merging the assigned fix clears the red base" \
+    bash -c '[[ $1 == 0 && "$2" == *"the base is green again"* && -z "$3" ]]' _ "$rc" "$out" "$(red_banner)"
+check "base-red: the held PR is back in the queue" bash -c '[[ "$1" == "24	"* ]]' _ "$(cd "$proj" && "$ps" queue --base main)"
+check "hold: refused while the base is green (exit 1)" exits 1 as_me hold 24 --head "$head24" --owner "$me"
+echo '[]' > "$FAKE_GH/list.json"; agents "$me" w2:p1 idle "$wt1"
 
 make_pr 10 feat/ten src/ten.txt ten
 out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?

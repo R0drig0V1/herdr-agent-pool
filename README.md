@@ -246,7 +246,7 @@ their settings and keep it; `/multi-agent-herdr:setup` offers to remove the key.
 | Script | `claim-integrator.sh` | Gives the integrator session its herdr name (`integrator_name`), or refuses when another agent holds it; run by the SessionStart hook, and by `dispatch` and `integrate` as a fallback |
 | Script | `project-config.py` | Reads and validates `.claude/multi-agent-herdr.json` (see Configuration) |
 | Script | `integrate-pr.sh` | One PR, gated step by step: merge, `verify-merge.sh`, commit, push under the merge lock (re-verify when the base moved), branch deletion only when nothing moved; exit code = outcome |
-| Script | `pool-state.py` | Pool state in the git common dir: atomic PR claims, bounced heads, the merge lock (`lock run`), plan reports, number reservations (`reserve`, `unreserve`, `reservations`) |
+| Script | `pool-state.py` | Pool state in the git common dir: atomic PR claims, bounced heads, the merge lock (`lock run`), plan reports, number reservations (`reserve`, `unreserve`, `reservations`), the red-base notice (`base-red`, `hold`) |
 | Script | `integrator-pool.sh` | `list`, `route` (who `pr` announces to), `scale` (facts and a suggestion; the coordinator decides), `spawn <n>`, `stop <n> [--remove-worktree]`, `nudge` and `watch` (prompt idle members about PRs that wait unclaimed) |
 | Script | `resource-budget.py` | The hard floor: at most `heavy_slots` heavy commands at once on the machine, in a priority queue (`run`), holders and waiters (`status`), and the limits (`limits`) |
 | Script | `resource-board.sh` | The shared resource sheet: agents `note` and `clear` what they run; `show` prints memory, slots, notes and idle agents |

@@ -250,6 +250,37 @@ after 3 nudges is left to the coordinator, told once (a member may be declining 
 reason the watcher cannot see). A second `watch` for
 the same repository exits at once (a kernel `flock`), so the coordinator restarts it safely.
 
+## The base is red
+
+When `origin/<base>` itself fails a test (a merge left a stale entry, a fast check scope did not
+select the test), every PR's verification fails on it, and every author fixes the same line in
+their own branch: wasted fixes and conflicting PRs. The pool turns that into **one owner**:
+
+1. **Detect.** An integrator whose verification fails on tests unrelated to the PR runs only
+   those tests on `origin/<base>` (inside a heavy slot). When they fail there too, it records
+   `pool-state.py base-red report --tests "<ids>" --suspect <PR> --owner <me>` (`base-red.json`
+   in the pool state; several reports merge their tests), holds the PR (below) and tells the
+   coordinator `BASE RED: ...`. A coordinator whose promotion check fails on the base reports
+   it the same way.
+2. **One owner.** The coordinator names it: `pool-state.py base-red assign <agent> --branch
+   <its branch>` (coordinator only), dispatching a fix task when nobody is on it.
+3. **Everyone else waits.** `pool-state.py base-red show` prints the banner `BASE <base> IS RED
+   since <time>: <tests>; suspect PR #<S>; fix assigned to <owner>. Do NOT fix it in your
+   branch: rebase after the fix lands.` The `commit` and `pr` skills show it and do not stop on
+   those tests; `verify-merge.sh` prints it and hands the tests to `scripts/check.sh` as
+   `$MULTI_AGENT_HERDR_BASE_RED_TESTS` (space-separated; a project may leave them out, which is
+   the explicit exemption). While the base is red, a failed merge verification is
+   `integrate-pr.sh` exit 14 instead of a bounce, with the claim kept: when only the red tests
+   failed the integrator runs `pool-state.py hold <N> --head <sha>` (the claim is released, a
+   bounce of that head is undone, and `queue` skips the PR while the base is red); otherwise it
+   bounces as usual.
+4. **Clear.** Merging the assigned fix's branch clears the entry (`integrate-pr.sh` runs
+   `base-red clear --if-branch <B>`), or the coordinator clears it after a green base check.
+   Held PRs return to the queue; the cleared period is appended to `base-red.log`.
+
+`report`, `clear` and `hold` are for pool members (and the coordinator), `assign` for the
+coordinator only; `show` is for everyone. The state is files, like the rest of the pool's.
+
 ## Who owns the plan
 
 The coordinator owns `docs/phases/`. Integrators never write it: after a merge,
@@ -545,6 +576,9 @@ the codes). It folds in the lessons of the project's integration helper:
 - **No verdict without a check**: when the verification never ran (its wait for a slot was
   interrupted, `verify-merge.sh` exit 120), the PR goes back to the queue without a bounce
   (exit 13). Before, killing a waiter recorded a false bounce.
+- **No bounce for a red base**: while `pool-state.py base-red` says the base fails on its own,
+  a failed verification is exit 14 (claim kept), and the integrator holds the PR or bounces
+  it ("The base is red").
 - **Keep the branch when it moved during the verification.** The branch is deleted only when
   the PR's head, the remote branch and the merged head are the same commit and it is in
   `origin/<base>`.

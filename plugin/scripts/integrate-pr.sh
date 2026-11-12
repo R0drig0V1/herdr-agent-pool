@@ -55,7 +55,9 @@
 # not acquired; 9 nothing to merge (the head is already in the base); 10 the claim changed hands
 # (nothing pushed); 11 herdr stopped confirming this pane's identity under the lock (nothing
 # pushed); 13 the verification never ran (verify-merge.sh exit 120: its wait for a slot was
-# interrupted), which is no verdict. On 5-10 and 13 the worktree is reset and the PR goes back
+# interrupted), which is no verdict; 14 the verification failed while the base is red
+# (pool-state.py base-red): no bounce, the claim is kept, the integrator decides between
+# `pool-state.py hold` (only the red tests failed) and `pool-state.py bounce`. On 5-10 and 13 the worktree is reset and the PR goes back
 # to the queue without a bounce (the claim is released, except on 10). Needs git, gh, jq, python3 and (inside herdr) herdr.
 set -uo pipefail
 
@@ -320,6 +322,13 @@ run_verify() {
     echo "(full verification log: $log)"
     return "$rc"
 }
+verify_failed() {  # verify_failed <reason>: a bounce, or exit 14 while the base is red
+    if [[ -n "$("$ps" base-red show 2>/dev/null)" ]]; then
+        "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
+        requeue base-red 14 "$1; the base is red ($("$ps" base-red show --tests 2>/dev/null)): read the log, then pool-state.py hold (only those tests failed) or bounce" keep-claim
+    fi
+    finish_bounce verify-failed 4 "$1"
+}
 verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, requeue when nothing ran
     run_verify; local rc=$?
     [[ $rc == 0 ]] && return 0
@@ -327,7 +336,7 @@ verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, r
         "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
         requeue not-verified 13 "the verification never ran (its wait for a slot was interrupted); no bounce; log: $log"
     fi
-    finish_bounce verify-failed 4 "verify-merge.sh failed on the merge with $1 (${base_sha:0:12}); log: $log"
+    verify_failed "verify-merge.sh failed on the merge with $1 (${base_sha:0:12}); log: $log"
 }
 verified_or_out "origin/$base"
 
@@ -367,7 +376,7 @@ while :; do
              fi
              requeue push-failed 6 "the push under the merge lock ran longer than 600 s and was killed" ;;
         5) requeue commit-failed 5 "git commit of the re-merge failed" ;;
-        76) finish_bounce verify-failed 4 "verify-merge.sh failed under the merge lock on the new origin/$base ($(cat "$IPR_STATE")); log: $log" ;;
+        76) verify_failed "verify-merge.sh failed under the merge lock on the new origin/$base ($(cat "$IPR_STATE")); log: $log" ;;
         77) "${verify[@]}" --reset-only >/dev/null 2>&1 9>&- || true
             requeue not-verified 13 "the verification under the merge lock never ran (its wait for a slot was interrupted); no bounce; log: $log" ;;
         *) requeue push-failed 6 "the push under the merge lock failed (exit $rc); nothing landed" ;;
@@ -400,6 +409,9 @@ fi
 
 # The branch's number reservations (pool-state.py reserve) are spent: its files landed.
 "$ps" unreserve --owner "$B" >/dev/null 2>&1 || true
+# The fix of a red base (pool-state.py base-red assign --branch) just landed: green again.
+"$ps" base-red clear --owner "$me" --if-branch "$B" --reason "PR #$N ($B), the assigned fix, merged" 2>/dev/null \
+    && echo "the base is green again: PR #$N was the assigned fix"
 
 # 6. Plan report and claim (pool mode).
 if [[ "$mode" == pool ]]; then
