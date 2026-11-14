@@ -28,8 +28,20 @@ git log --oneline -10   # match the existing style
 
 ## 2. Verify before committing
 
+**Is the base red?** First:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show
+```
+
+It prints nothing while `<base>` is green. A `BASE ... IS RED` banner names failing tests and
+the one agent that owns their fix: do **not** fix those tests in your branch (unless you are
+that owner), and do not let them stop you: when only those tests fail, go on and say so
+(`base red: <tests>`) in your report and, for a PR, under Test plan. Rebase after the fix
+lands. Show the banner to the user.
+
 Run from the workspace root and fix or report failures. Do not commit red checks unless the
-user explicitly says so.
+user explicitly says so (failures of only the base-red tests above are not yours).
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/resource-budget.py" run --label "check $(git branch --show-current)" -- scripts/check.sh; echo "exit=$?"

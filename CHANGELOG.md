@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Lessons from the project's first night in pool mode (3 integrators, about 15 agents).
+
 ### Changed
 - **Renamed to `herdr-agent-pool`**, so it no longer shares its names with the separate
   two-level plugin in claude-code-herdr: marketplace `herdr-agent-pool`, plugin id
@@ -34,6 +36,59 @@ All notable changes to this project are documented here. The format follows
   starts agents for every task that can start now, without waiting to be asked, and always
   starts writing code early. It does not force work: no agents for undecided designs, for
   collisions with branches in flight, or for work a pending decision would make us amend.
+- `docs/ci-workflows.md`: recommendations for a project's own CI under many agents. Test each
+  change once, where the gate is (never on `pull_request` and again on `push` to the base);
+  a newer run cancels an older one, also for deploys; split by toolchain; merge short jobs,
+  because each job bills at least a minute. It has reference workflows (checked with
+  actionlint and zizmor), a measurement snippet and a checklist.
+- `setup` skill, step 5: reviews `.github/workflows/` against that checklist and reports
+  what fails, read-only.
+- `resource-budget.py`: a **priority queue** for slots. Waiters write tickets; a free slot goes
+  to `merge` (an integrator's `verify-merge.sh`), then `plan` (the coordinator's checks),
+  then `normal`, oldest first; a ticket waiting 20 min counts as `merge`. `--priority` is
+  honoured only for the matching `CLAUDE_ROLE`.
+- `resource-budget.py`: a **light pool** (`light_slots`, default 2) for worktree setup
+  (`new-worktree.sh`, `verify-merge.sh`, `integrator-pool.sh spawn`), so setup no longer waits
+  behind test suites.
+- `resource-budget.py status [--json]`: every holder of both pools (also those above a lowered
+  limit) and the waiters in turn order; `resource-board.sh show` prints it.
+- `$HERDR_AGENT_POOL_SLOT_COUNT` for the command in a slot (the pool's limit at admission).
+- Project setting `verify` (`check_env`, `docs_only_paths`, `docs_only_env`): variables for
+  `scripts/check.sh` on merge verifications, e.g. a fast lane, and a docs-only lane. A variable
+  the caller exported wins over both.
+- `integrate-pr.sh` exit 13: the verification never ran (its wait for a slot was interrupted),
+  back to the queue without a bounce.
+- `integrate-pr.sh` takes a per-worktree lock: a second run in the same verify worktree is
+  refused (exit 2) instead of aborting the first run's merge.
+- Optional project hook `scripts/reverify-needed.sh` (read from the new base): when the base
+  moved during a verification, it decides whether the change can affect the PR's checks; when
+  it answers `no-reverify` (exit 0), the PR lands without a re-verification. Anything else
+  verifies again.
+- The last re-verification (`max_reverify`) runs holding the merge lock, so a long verification
+  cannot starve (`integrators.locked_reverify_minutes`, default 60; 0 turns it off).
+- `integrator-pool.sh nudge` / `watch`: a token-free watcher prompts idle members when an open PR
+  has waited unclaimed for `integrators.nudge_after_minutes` (default 5); the coordinator starts
+  it. After 3 nudges about a PR it tells the coordinator once. The `pr` skill re-announces
+  through `route` only.
+- Project setting `numbered_files` and `pool-state.py reserve` / `unreserve` / `reservations`:
+  migration and ADR numbers handed out per branch, so parallel branches never pick the same one;
+  the `dispatch` skill reserves them and writes them in the brief.
+- "Base is red" notice: `pool-state.py base-red report|assign|clear|show` and `hold`. One owner
+  fixes a base that fails on its own; `commit`, `pr` and `verify-merge.sh` print the banner
+  (`$HERDR_AGENT_POOL_BASE_RED_TESTS` for `scripts/check.sh`); `integrate-pr.sh` exit 14
+  instead of a bounce while red; merging the assigned fix clears it.
+- `integrate` skill: refresh claims, open PRs and the base after any pause; look for a recorded
+  decision before asking, and never wait at a dialog holding a PR (comment, bounce, tell the
+  coordinator, move on).
+
+### Fixed
+- `resource-budget.py run` read `heavy_slots` once: raising it never admitted a waiter (one PR
+  waited 40 min with a slot free) and lowering it never held new ones back. Every retry now
+  re-reads the limits, keeping the last good value when the file is half written.
+- `resource-board.sh show` listed only the slots below the current limit, hiding holders above
+  a lowered one.
+- `new-worktree.sh` retries the fetch of the base branch once (DNS hiccups).
+- Owner files and tickets are written atomically.
 
 ## [0.2.0] - 2026-11-09
 

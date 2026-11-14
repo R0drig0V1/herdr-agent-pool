@@ -88,6 +88,18 @@ through `integrator-pool.sh stop`.
 
 ## 2. The pool: scale by asking
 
+**The pool watcher.** Start it once when you start (Bash with `run_in_background`; a second
+start exits at once, so restarting is safe):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" watch
+```
+
+It spends no Claude tokens: every minute it prompts an idle member (without a claim) when an
+open PR has waited unclaimed for `integrators.nudge_after_minutes`, each member at most once per
+that interval. It covers lost announcements and authors that announce to a busy member. If it
+stops (it dies with your session), start it again.
+
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" list
 "${CLAUDE_PLUGIN_ROOT}/scripts/integrator-pool.sh" scale
@@ -190,6 +202,29 @@ branch is the user's call. Exit 6: the workspace holds something else; ask the u
 Discarding finished worktrees is also the cheapest way to give the machine memory back: each
 one keeps a Claude session alive until its workspace is closed. When the pool shrinks for
 good, `integrator-pool.sh stop <n> --remove-worktree` discards a member's verify worktree too.
+
+### The base is red
+
+An integrator that finds tests failing on `origin/<base>` alone records it (`pool-state.py
+base-red report`) and sends you `BASE RED: ...`. Name **one** owner of the fix, so nobody else
+fixes it in their branch: an agent already on it, or dispatch a fix task (`dispatch`), then
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show                      # the banner
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red assign <agent> --branch <its branch>
+```
+
+Tell that agent it owns the fix. Every `commit`, `pr` and merge verification prints the
+banner meanwhile, and integrators hold the PRs that fail only on those tests. The entry clears
+by itself when the fix's branch merges. When a full base check (your promotion check) is green
+first, clear it yourself; held PRs return to the queue:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red clear --owner <me> --reason "<check> green on <sha>"
+```
+
+A promotion check that fails on the base alone is a red base too: `base-red report` it
+yourself with the failing tests.
 
 ## 4. Development agents
 

@@ -150,6 +150,19 @@ returns `agent_not_ready`, the new agent is stuck at a startup dialog (typically
 
 ## 5. Send the brief
 
+**Numbered files.** When the task will add a file of a `numbered_files` kind (project settings,
+e.g. a migration or an ADR), reserve its number for the branch first, so two parallel branches
+never pick the same one, and put it in the brief:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/project-config.py" numbered_files    # the kinds, {} when none
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" reserve <kind> --owner <BRANCH>; echo "exit=$?"
+```
+
+It prints the number, zero-padded: above every number on `origin/<base>`, in an open PR and
+already reserved. The reservation ends when the file lands (or `pool-state.py unreserve
+--owner <BRANCH>` if the task is dropped).
+
 The brief, in English. `herdr agent prompt` reaches the new agent as a **user** message, so
 it starts with the fixed header line (the body heredoc is quoted: nothing in it is expanded):
 
@@ -173,6 +186,9 @@ and ask "<me>" first: "RESOURCE REQUEST: <what>, ~<GB> GB, ~<min> min, for <task
 RESOURCE GO. On RESOURCE YIELD or SAVE MODE ON, stop at a safe point and confirm. Clear your
 note (resource-board.sh clear) as soon as it stops.
 Questions, or anything that blocks you: herdr agent prompt "<me>" with the same header.
+<only with reserved numbers:> Numbers reserved for this branch: <kind> <number>, ... Use them;
+if you need another, run "${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" reserve <kind> --owner
+<BRANCH> and never pick a number by looking at the tree.
 Finish with /herdr-agent-pool:pr: it opens the PR against <base> and announces it to the
 integrator (pool mode: one live member of the integrator pool); the verdict comes back
 straight from the integrator that handles it.

@@ -37,13 +37,29 @@ Settings (`.claude/herdr-agent-pool.json`, read only by `project-config.py`):
     "scale_down_idle_minutes": 30,
     "claim_ttl_minutes": 60,
     "max_reverify": 3,
-    "reverify_exempt_paths": ["docs/phases/*.md"]
+    "reverify_exempt_paths": ["docs/phases/*.md"],
+    "locked_reverify_minutes": 60,
+    "nudge_after_minutes": 5
+  },
+  "numbered_files": {
+    "adr": "docs/decisions/(\\d{4})-.*\\.md",
+    "migration": "src/app/migrations/(\\d{4})_.*\\.sql"
   }
 }
 ```
 
 The `integrators` object turns pool mode on; every key in it is optional (the values above
-are the defaults). `project-config.py` derives `mode` (`single`/`pool`) and `integrator_pool`
+are the defaults). `numbered_files` (default `{}`, both modes) names the numbered files that
+parallel branches must not number alike; see "Numbered files" below.
+
+A `verify` object, in either mode, shapes the merge verification: `check_env` adds variables
+to `scripts/check.sh`'s environment on every merge verification (for example
+`{"PROJECT_CHECK_SCOPE": "fast"}`: a fast lane for merges while promotions run the full
+check), and `docs_only_env` is added on top when every path the merge changes matches
+`docs_only_paths` (a docs-only lane; off while that list is empty). A variable the caller
+already exported wins over both (export `PROJECT_CHECK_SCOPE=full` before `integrate-pr.sh`
+for a full-scope merge verification). Identity variables
+(`CLAUDE_*`, `HERDR_*`, `HERDR_AGENT_POOL_*`) are refused. `project-config.py` derives `mode` (`single`/`pool`) and `integrator_pool`
 (`<integrator_name>-1` .. `-max`, each cut to herdr's 32 characters).
 
 ## Message flows
@@ -157,9 +173,26 @@ and a clear "base moved" signal, and keeps two integrators from re-merging at th
 3. Compare the new merged tree with the verified one (`git diff --name-only`). When every
    difference matches `reverify_exempt_paths` (default `docs/phases/*.md`, compared with `--no-renames`: the coordinator's
    plan commits, which cannot change the result of the checks), commit and push at once.
+   Likewise when the project has a `scripts/reverify-needed.sh` and it says the change cannot
+   affect this PR's checks (below).
 4. Otherwise release the lock and verify the new tree, then go back to 1; after
    `max_reverify` re-verifications, give the PR back to the queue (claim released, no
-   bounce; exit 7).
+   bounce; exit 7). The **last** of those re-verifications runs inside the merge lock
+   (`locked_reverify_minutes`, default 60, then it is killed; 0 turns this off): the base
+   cannot move under it, so a long verification cannot starve. Other integrators wait for the
+   lock meanwhile (up to 900 s, then their PR goes back to the queue without a bounce).
+
+**`scripts/reverify-needed.sh`** (optional, the project's): `reverify-needed.sh <verified
+base> <new base> <PR head>`, with the paths that differ between the verified tree and the new
+merged tree on stdin, one per line. Only exit 0 with `no-reverify` as the last line of its
+output means the new base cannot affect this PR's checks: push without verifying again.
+Anything else (another line, another exit code, a crash, no answer within 120 s) verifies
+again, so a broken hook fails closed. Its last output lines go to the integrator's log. It
+runs under the merge lock in the verify worktree (the new merged tree is checked out), and it
+is read from the **new base** commit, so a PR cannot change the rule for its own merge. Keep it
+fast and conservative: a wrong "1" lets a semantic conflict land. A project that selects its
+tests by path (a check scope) can answer from the intersection of the changed paths with the
+PR's scope.
 
 This is the merge-queue rule ("the tree that lands is the tree that was tested"), applied
 per PR. Trade-offs of the policies considered:
@@ -183,6 +216,70 @@ depend on a failed one, and N times the machine resources at once. On one laptop
 resource budget, not the integrator count, is the limit (see below), so speculative runs
 would mostly wait for heavy slots. Per-PR verification with re-verification on collision is
 simpler and fails more legibly. Revisit on a machine with spare capacity: open question 3.
+
+## Numbered files
+
+Two parallel branches that each add "the next" migration or ADR pick the same number. With
+`numbered_files` set (`{kind: regex}`; the regex matches a whole path and captures the number
+in its one group), the dispatcher reserves the number when it dispatches the task and writes
+it in the brief:
+
+```bash
+pool-state.py reserve <kind> --owner <branch>     # prints e.g. 0037
+pool-state.py reservations                        # kind  number  owner  age-s
+pool-state.py unreserve --owner <branch> [--kind K] [--number N]
+```
+
+The number is one above every number on `origin/<base>`, in an open PR's head (fetched) and
+already reserved, zero-padded like the existing files. When `origin/<base>` cannot be fetched
+or the open PRs cannot be listed, `reserve` hands out nothing (exit 1): a number computed from
+stale trees could collide. A reservation ends when its number
+lands on `origin/<base>` (the next `reserve` prunes it), when `integrate-pr.sh` merges its
+branch, or with `unreserve`. Reservations are cooperative: no identity check, any session may
+reserve (the development agent itself, when it needs another number).
+
+## Lost announcements: the pool watcher
+
+An announcement goes to one member (`route`: the first idle one). Authors that announce to a
+busy member by name, or a message lost while a member was blocked, leave PRs unclaimed while
+another member idles. `integrator-pool.sh watch` (started by the coordinator in the
+background; no Claude tokens) runs `nudge` every minute: when an open PR has waited unclaimed
+for `integrators.nudge_after_minutes` (default 5; 0 turns it off), it prompts idle members that
+hold no claim, one per waiting PR, each at most once per that interval. A PR still unclaimed
+after 3 nudges is left to the coordinator, told once (a member may be declining it for a
+reason the watcher cannot see). A second `watch` for
+the same repository exits at once (a kernel `flock`), so the coordinator restarts it safely.
+
+## The base is red
+
+When `origin/<base>` itself fails a test (a merge left a stale entry, a fast check scope did not
+select the test), every PR's verification fails on it, and every author fixes the same line in
+their own branch: wasted fixes and conflicting PRs. The pool turns that into **one owner**:
+
+1. **Detect.** An integrator whose verification fails on tests unrelated to the PR runs only
+   those tests on `origin/<base>` (inside a heavy slot). When they fail there too, it records
+   `pool-state.py base-red report --tests "<ids>" --suspect <PR> --owner <me>` (`base-red.json`
+   in the pool state; several reports merge their tests), holds the PR (below) and tells the
+   coordinator `BASE RED: ...`. A coordinator whose promotion check fails on the base reports
+   it the same way.
+2. **One owner.** The coordinator names it: `pool-state.py base-red assign <agent> --branch
+   <its branch>` (coordinator only), dispatching a fix task when nobody is on it.
+3. **Everyone else waits.** `pool-state.py base-red show` prints the banner `BASE <base> IS RED
+   since <time>: <tests>; suspect PR #<S>; fix assigned to <owner>. Do NOT fix it in your
+   branch: rebase after the fix lands.` The `commit` and `pr` skills show it and do not stop on
+   those tests; `verify-merge.sh` prints it and hands the tests to `scripts/check.sh` as
+   `$HERDR_AGENT_POOL_BASE_RED_TESTS` (space-separated; a project may leave them out, which is
+   the explicit exemption). While the base is red, a failed merge verification is
+   `integrate-pr.sh` exit 14 instead of a bounce, with the claim kept: when only the red tests
+   failed the integrator runs `pool-state.py hold <N> --head <sha>` (the claim is released, a
+   bounce of that head is undone, and `queue` skips the PR while the base is red); otherwise it
+   bounces as usual.
+4. **Clear.** Merging the assigned fix's branch clears the entry (`integrate-pr.sh` runs
+   `base-red clear --if-branch <B>`), or the coordinator clears it after a green base check.
+   Held PRs return to the queue; the cleared period is appended to `base-red.log`.
+
+`report`, `clear` and `hold` are for pool members (and the coordinator), `assign` for the
+coordinator only; `show` is for everyone. The state is files, like the rest of the pool's.
 
 ## Who owns the plan
 
@@ -245,6 +342,7 @@ agent's own is not inspected.
 | An integrator crashes **holding the merge lock** | the kernel releases the `flock` with the process | the next `lock run` proceeds; the push either happened (atomic on the remote) or not |
 | An integrator crashes **after the push, before its verdict/report** | the PR is merged on GitHub (the head is in `<base>`), the claim goes stale, no plan report | the PR leaves the open queue by itself; the coordinator's catch-up step finds the merged PR without a report and ticks it; the author sees the merge on GitHub (no herdr verdict) |
 | Two integrators claim the same PR | exactly one `mkdir` succeeds | the loser gets exit 3 and takes the next PR |
+| A second `integrate-pr.sh` starts in a worktree where one is running | the per-worktree lock (a `flock` in the worktree's git dir) refuses it with exit 2, before it touches the merge in progress | the integrator waits for the first run's `RESULT`; a lock left by a dead run's leftover process is taken over |
 | Two integrators push at once | the lock serializes them; without it, the remote would reject the second as a non-fast-forward | the second one re-merges (and re-verifies unless only exempt paths moved) |
 | `<base>` moves during a verification | detected under the lock | re-merge, push or re-verify (policy above); exit 7 after `max_reverify` |
 | The head branch moves during a verification | the verified head is merged; the branch is **kept** (deleted only when PR head = remote head = merged head, with a lease on that commit) | the PR stays open with the new commits and comes back to the queue |
@@ -253,6 +351,9 @@ agent's own is not inspected.
 | herdr cannot be asked | claims are judged by age only; `route` finds nobody | nothing is merged twice: claims still hold until their TTL |
 | One herdr listing misses a live integrator | its claim is marked `missing_since`, not taken | the next listing that shows it clears the mark (its heartbeat rewrites the claim) |
 | A claim changes hands anyway during a long verification | the first integrator re-checks its claim under the merge lock | it pushes nothing (exit 10) and leaves the PR to the new owner |
+| A verification's wait for a slot is interrupted (someone stopped the waiting `resource-budget.py`) | `verify-merge.sh` exits 120: nothing was checked | `integrate-pr.sh` resets, releases the claim and exits 13: back to the queue, no bounce |
+| An integrator resumes after an outage, sleep or a long dialog | its picture of the PRs, claims and base is old (one tried to merge a PR merged 7 h earlier) | the `integrate` skill refreshes claims, open PRs and the base before acting |
+| A PR needs a decision the integrator cannot make | before, it waited at a dialog (6 h one night: half the pool) | it looks for a recorded decision (`docs/phases/`, `docs/decisions/`, `CLAUDE.md`); without one it comments the question, bounces the head, tells the coordinator and takes the next PR |
 | The push under the merge lock hangs | killed after 600 s (`lock run --max-seconds`) | the claim is released and the PR goes back to the queue (exit 6) |
 | `.claude/herdr-agent-pool.json` becomes invalid | every role loses its rights (fail closed) | fix the file (the Edit guard allows that one file); `project-config.py` names the error |
 | The machine runs out of memory | every agent loses its turn | prevented by the resource budget below |
@@ -323,17 +424,37 @@ Many were idle or done, and each still held its memory.
 Resources are therefore **negotiated**, not computed. The coordinator is the arbiter, the
 **resource board** is the shared sheet everyone reads, and only one thing is mechanical.
 
-**The hard floor: heavy slots** (`resource-budget.py run`, about 150 lines). At most
-`heavy_slots` heavy commands run at once on the machine, across every agent and project.
+**The hard floor: heavy slots** (`resource-budget.py run`). At most `heavy_slots` heavy
+commands run at once on the machine, across every agent and project.
 
-- `verify-merge.sh` runs `worktree-setup.sh` and `check.sh` through it; so does
-  `new-worktree.sh` for `worktree-setup.sh`, and the `commit` and `pr` skills for the checks.
+- `verify-merge.sh` runs `check.sh` through it, and so do the `commit` and `pr` skills.
+- Worktree setup (`worktree-setup.sh`, from `verify-merge.sh`, `new-worktree.sh` and
+  `integrator-pool.sh spawn`) goes through a separate **light** pool (`light_slots`,
+  default 2): a warm-cache install never waits behind a test suite, yet a burst of new
+  worktrees cannot all install at once. (In the project, a new-worktree setup once waited 40 min
+  for a heavy slot.)
 - It stays code because a conversation cannot stop a process that is already allocating
   memory. When memory is scarce, agents answer late or not at all.
 - Slots are `flock`ed files in `~/.cache/herdr-agent-pool/resources/`, so a crashed holder
   frees its slot. A nested call (`$HERDR_AGENT_POOL_SLOT` set) runs at once instead of
   deadlocking.
-- Waiters poll every 2 s with no FIFO order: who goes first is the coordinator's call.
+- Waiters **queue**. Each one writes a ticket; a free slot goes to the first ticket in
+  priority order, oldest first within a priority: `merge` (an integrator's
+  `verify-merge.sh`, honoured only for CLAUDE_ROLE=integrator), then `plan` (the
+  coordinator's own checks), then `normal` (everything else). A ticket that waited 20 min
+  counts as `merge`, so nothing starves. Before this queue, waiters polled with no order: in
+  the project, author checks kept beating merge verifications to the slot, and one PR waited
+  40 min while a slot stood free.
+- Every retry **re-reads the limits**. Raising `heavy_slots` admits waiters at once; lowering
+  it admits nobody new until the holders above the new limit finish (they are never killed,
+  and the board lists them). A limits file that is half written when a waiter reads it keeps
+  the waiter's last good limit.
+- The command gets `$HERDR_AGENT_POOL_SLOT_COUNT` (the pool's limit when it was admitted),
+  so a project can size its parallelism, e.g. test workers = cores / slots: two checks with 4
+  workers each load a shared test database like one check with 8.
+- A waiter stopped by a signal (SIGTERM, SIGINT, SIGHUP) exits 120: its command never ran.
+  `verify-merge.sh` passes 120 on, and `integrate-pr.sh` turns it into exit 13 (back to the
+  queue, no bounce). Do not stop waiters to make them see a new limit: they see it anyway.
 - Its limits:
   - it binds only the commands run through it, not a suite an agent starts by hand;
   - setting `HERDR_AGENT_POOL_SLOT` would skip it, so the guard blocks that;
@@ -352,7 +473,8 @@ with one file per agent so nobody overwrites anybody.
 - `show` prints:
   - memory, flagged **LOW** below `low_memory_gb`;
   - the live herdr agents against the machine's `sessions_guideline`;
-  - who holds each heavy slot, and for how long;
+  - who holds each heavy and light slot, and for how long, flagging a holder above a lowered
+    limit; and the waiters, in turn order with their priority;
   - every note, flagged **overdue** or **(gone)**;
   - the agents that look idle.
 - `prune` drops the notes of agents that are no longer live.
@@ -384,8 +506,8 @@ memory). That is why the protocol is hub-and-spoke through the coordinator, and 
 asks only for what goes beyond a normal check. The normal check just waits for its slot.
 
 Limits are per machine, in `~/.config/herdr-agent-pool/resources.json`, overriding defaults
-derived from the RAM. Only `heavy_slots` is enforced; the other two are guidelines the board
-shows and the coordinator weighs:
+derived from the RAM. `heavy_slots` and `light_slots` (default 2 on every machine) are
+enforced; the other two are guidelines the board shows and the coordinator weighs:
 
 | RAM | `heavy_slots` (enforced) | `sessions_guideline` | `low_memory_gb` |
 |-----|--------------------------|----------------------|-----------------|
@@ -451,6 +573,12 @@ the codes). It folds in the lessons of the project's integration helper:
 - **Abort and reset on a failed verification**: `git merge --abort`, then
   `verify-merge.sh --reset-only`, so the next PR starts clean. A `check.sh` that modifies
   tracked files counts as a failure.
+- **No verdict without a check**: when the verification never ran (its wait for a slot was
+  interrupted, `verify-merge.sh` exit 120), the PR goes back to the queue without a bounce
+  (exit 13). Before, killing a waiter recorded a false bounce.
+- **No bounce for a red base**: while `pool-state.py base-red` says the base fails on its own,
+  a failed verification is exit 14 (claim kept), and the integrator holds the PR or bounces
+  it ("The base is red").
 - **Keep the branch when it moved during the verification.** The branch is deleted only when
   the PR's head, the remote branch and the merged head are the same commit and it is in
   `origin/<base>`.
