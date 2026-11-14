@@ -52,7 +52,8 @@ def names(item):
 cmd = " ".join(args[:2])
 if cmd == "pr list":
     out = [{"number": p["number"], "createdAt": p["createdAt"]} for p in state["prs"].values()
-           if p["state"] == "OPEN" and p["baseRefName"] == opt("--base") and opt("--label") in names(p)]
+           if p["state"] == "OPEN" and p["baseRefName"] == opt("--base") and opt("--label") in names(p)
+           and not p.get("hidden")]
     print(json.dumps(out))
 elif cmd == "issue list":
     print(json.dumps([{"number": i["number"]} for i in state["issues"] if opt("--label") in names(i)]))
@@ -61,6 +62,10 @@ elif cmd == "pr view":
     if pr is None:
         sys.exit("no pull requests found")
     print(json.dumps(pr))
+elif cmd == "repo view":
+    print(state.get("default", "main"))
+elif cmd == "issue close":
+    state.setdefault("closed", []).append(int(args[2]))
 elif cmd == "pr comment":
     state["prs"][args[2]]["comments"].append({"body": sys.stdin.read()})
 elif cmd == "pr edit":
@@ -255,12 +260,36 @@ check "base red: an ordinary PR waits"              said "LAND #14 wait the base
 check "base red: the fix lands"                     said "LAND #15 merged"
 gh_set '.issues = [] | .prs["15"].state = "MERGED"'
 
+check "default base: the lander closes no issue"   bash -c "[[ \$(jq '.closed // [] | length' '$FAKE_GH_STATE') == 0 ]]"
+
 lander --dry-run
 check "dry run: reports what it would land"         said "LAND #14 would-land"
 check "dry run: nothing merged"                     not on_main fourteen.txt
 check "dry run: the check never ran"                [ "$(runs)" = 0 ]
 lander
 check "after the base turns green, #14 lands"       said "LAND #14 merged"
+
+# A base that is not the default branch: GitHub ignores closing keywords there, so the lander
+# closes the issues itself.
+gh_set '.default = "develop"'
+make_pr 16 sixteen.txt sixteen
+gh_set '.prs["16"].body = "Fixes #116, see #5, resolves #117\nCloses other/repo#7\n"'
+lander
+check "non-default base: merged"                    said "LAND #16 merged"
+check "non-default base: closes the named issues"   bash -c "[[ \$(jq -c '.closed' '$FAKE_GH_STATE') == '[116,117]' ]]"
+gh_set '.default = "main" | .prs["16"].state = "MERGED"'
+
+# GitHub's label search lags: a --pr from the event is considered even when the list misses it.
+make_pr 17 seventeen.txt seventeen
+gh_set '.prs["17"].hidden = true'
+lander --pr 17
+check "--pr: lands a PR the label search missed"    said "LAND #17 merged"
+make_pr 18 eighteen.txt eighteen
+gh_set '.prs["18"].labels = []'
+lander --pr 18
+check "--pr: skips a PR that is not queued"         said "LAND #18 skip"
+check "--pr: nothing merged for it"                 not on_main eighteen.txt
+gh_set '.prs["17"].state = "MERGED" | .prs["18"].state = "CLOSED"'
 
 echo dirty >> "$proj/README.md"
 lander

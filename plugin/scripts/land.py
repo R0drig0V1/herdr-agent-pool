@@ -26,8 +26,10 @@ queue label, oldest first (by creation time, then number), and for each one:
    meanwhile, the push is rejected and the PR is merged and verified again on the new base,
    up to `--attempts` times; after that it stays queued for the next run.
 3. After a merge, the head branch is deleted (same repository only, with a lease on the
-   merged head). The merge commit carries the PR body's closing lines (`Closes #12`), so the
-   issues close even when GitHub does not process the PR's own keywords on a pushed merge.
+   merged head). The merge commit carries the PR body's closing lines (`Closes #12`). GitHub
+   acts on closing keywords only on the default branch (checked in the sandbox, 2026-11-14:
+   a pushed merge into `develop` marks the PR merged but leaves its issue open), so when the
+   base is not the default branch the lander closes those issues itself.
 
 A conflict or a red check on the candidate is a bounce: the queue label is removed, a comment
 with the reason (and the end of the check's log) is posted, and the bounce is counted in that
@@ -39,12 +41,15 @@ Usage:
     land.py [--base BRANCH] [--remote NAME] [--check CMD] [--check-timeout MIN]
             [--attempts N] [--max-rounds N] [--bot LOGIN]... [--dry-run]
 
-`--base` defaults to the project's `base_branch` (project-config.py). `--dry-run` reads
+`--base` defaults to the project's `base_branch` (project-config.py). `--pr N` also
+considers PR N even when GitHub's label search does not list it yet (the PR of the event that
+started the run; see `queued`). `--dry-run` reads
 GitHub and prints each decision without merging, commenting or labelling: shadow mode, to
 compare the lander with today's integrators before switching.
 
 Output: one line per pull request, `LAND #<N> <outcome> <detail>`, outcomes `merged`,
-`wait`, `unqueued`, `bounced`, `needs-human`, `retry-later`. Exit codes: 0 the queue was
+`wait`, `unqueued`, `bounced`, `needs-human`, `retry-later`, `skip` (a `--pr` that is not
+open and queued). Exit codes: 0 the queue was
 processed (whatever each PR's outcome); 1 usage, settings or a dirty working tree; 2 git or gh
 failed in a way that leaves the run unsafe to continue.
 
@@ -57,6 +62,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -72,12 +78,15 @@ BOUNCE_MARK = "<!-- herdr-agent-pool:lander bounce -->"
 HUMAN_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 CLOSING = ("close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved")
 PR_FIELDS = (
-    "number,title,body,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,"
+    "number,state,title,body,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,"
     "labels,reviews,statusCheckRollup,comments"
 )
 GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 PENDING = {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED", ""}
 LOG_TAIL = 60
+# A closing keyword directly followed by a same-repository reference, as GitHub reads them
+# ("Fixes #3, see #4" closes #3 only; "Closes other/repo#7" is another repository's).
+CLOSES_REF = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b", re.IGNORECASE)
 
 
 class Fatal(Exception):
@@ -94,6 +103,8 @@ class Settings:
     max_rounds: int = 2
     bots: set[str] = field(default_factory=set)
     dry_run: bool = False
+    default_branch: str = ""
+    extra: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -129,11 +140,22 @@ def git(*args: str, check: bool = True) -> str:
 
 
 def queued(s: Settings) -> list[int]:
-    """Open PRs against the base with the queue label, oldest first."""
+    """Open PRs against the base with the queue label, oldest first.
+
+    The label filter goes through GitHub's search index, which showed a label 1 to 7 s late
+    in the sandbox (2026-11-14): the run a `labeled` event starts can miss its own PR. So
+    the PRs given with `--pr` are added from `gh pr view`, which is consistent; `process`
+    skips any of them that is not open and queued.
+    """
     prs = gh_json(
         ["pr", "list", "--state", "open", "--base", s.base, "--label", QUEUE,
          "--limit", "200", "--json", "number,createdAt"]
     )  # fmt: skip
+    listed = {p["number"] for p in prs}
+    prs += [
+        gh_json(["pr", "view", str(n), "--json", "number,createdAt"])
+        for n in dict.fromkeys(s.extra) if n not in listed
+    ]  # fmt: skip
     return [p["number"] for p in sorted(prs, key=lambda p: (p["createdAt"], p["number"]))]
 
 
@@ -195,7 +217,9 @@ def is_human(review: dict[str, Any], bots: set[str]) -> bool:
 
 
 def gate(pr: dict[str, Any], s: Settings, red: bool) -> tuple[str, str]:
-    """(`land` | `wait` | `unqueue`, reason) for one queued PR."""
+    """(`land` | `wait` | `unqueue` | `skip`, reason) for one queued PR."""
+    if pr.get("state", "OPEN") != "OPEN" or QUEUE not in labels(pr):
+        return "skip", "not an open, queued pull request"
     if pr.get("isDraft"):
         return "unqueue", "the pull request is a draft"
     if pr.get("baseRefName") != s.base:
@@ -216,12 +240,17 @@ def gate(pr: dict[str, Any], s: Settings, red: bool) -> tuple[str, str]:
 # Landing -------------------------------------------------------------------------------------
 
 
-def merge_message(pr: dict[str, Any]) -> str:
-    """The merge commit's message, with the PR body's closing lines (`Closes #12`)."""
-    closing = [
+def closing_lines(pr: dict[str, Any]) -> list[str]:
+    """The PR body's lines that start with a closing keyword and name an issue."""
+    return [
         line.strip() for line in (pr.get("body") or "").splitlines()
         if line.strip().split(" ", 1)[0].rstrip(":").lower() in CLOSING and "#" in line
     ]  # fmt: skip
+
+
+def merge_message(pr: dict[str, Any]) -> str:
+    """The merge commit's message, with the PR body's closing lines (`Closes #12`)."""
+    closing = closing_lines(pr)
     parts = [f"Merge pull request #{pr['number']} from {pr['headRefName']}", pr["title"]]
     if closing:
         parts.append("\n".join(closing))
@@ -334,6 +363,19 @@ def bounce(pr: dict[str, Any], outcome: Outcome, s: Settings) -> str:
     return NEEDS_HUMAN if over else "bounced"
 
 
+def close_issues(pr: dict[str, Any], s: Settings) -> str:
+    """Close this repository's issues the PR names, when GitHub will not (non-default base)."""
+    if not s.default_branch or s.default_branch == s.base:
+        return ""
+    numbers = sorted({int(n) for n in CLOSES_REF.findall(pr.get("body") or "")})
+    closed = []
+    for number in numbers:
+        note = f"Closed by the lander: #{pr['number']} merged into `{s.base}`."
+        if ok(["gh", "issue", "close", str(number), "--comment", note]):
+            closed.append(f"#{number}")
+    return f"; closed {' '.join(closed)}" if closed else ""
+
+
 # The run -------------------------------------------------------------------------------------
 
 
@@ -347,7 +389,7 @@ def process(number: int, s: Settings, red: bool) -> tuple[str, str]:
         return {"land": "would-land", "unqueue": "unqueued"}.get(decision, decision), reason
     result = land(pr, s)
     if result.kind == "merged":
-        return "merged", f"{result.detail}; {delete_head(pr, s)}"
+        return "merged", f"{result.detail}; {delete_head(pr, s)}{close_issues(pr, s)}"
     if result.kind == "already":
         unqueue(number, result.detail)
         return "unqueued", result.detail
@@ -386,13 +428,14 @@ def parse(argv: list[str]) -> Settings:
     p.add_argument("--max-rounds", type=int, default=2)
     p.add_argument("--bot", action="append", default=[], help="a reviewer login that is a bot")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--pr", type=int, action="append", default=[], help="also consider this PR")
     a = p.parse_args(argv)
     if a.attempts < 1 or a.max_rounds < 0 or a.check_timeout <= 0:
         p.error("--attempts must be >= 1, --max-rounds >= 0, --check-timeout > 0")
     return Settings(
         base=a.base or default_base(), remote=a.remote, check=shlex.split(a.check),
         check_timeout=a.check_timeout, attempts=a.attempts, max_rounds=a.max_rounds,
-        bots=set(a.bot), dry_run=a.dry_run,
+        bots=set(a.bot), dry_run=a.dry_run, extra=a.pr,
     )  # fmt: skip
 
 
@@ -406,6 +449,9 @@ def main(argv: list[str]) -> int:
         print("land.py: the working tree has uncommitted changes", file=sys.stderr)
         return 1
     try:
+        s.default_branch = run(
+            ["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]
+        ).strip()
         count = drain(s)
     except Fatal as exc:
         print(f"land.py: {exc}", file=sys.stderr)

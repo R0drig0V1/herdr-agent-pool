@@ -42,6 +42,8 @@ they pass:
    is rejected, and the PR is merged and checked again on the new base, up to `--attempts`
    times (3).
 5. Deletes the head branch, with a lease on the merged head, so a later push keeps it.
+6. When the base is not the repository's default branch, closes the issues the PR body
+   names with a closing keyword (`Fixes #12`), because GitHub does not do it there.
 
 Because each run drains the whole queue, it does not matter that a concurrency group keeps
 only one pending run and discards the others.
@@ -96,7 +98,8 @@ The lander needs the phase 0 pieces first:
 
 Options of `land.py`: `--base` (default: the project's `base_branch`), `--remote` (`origin`),
 `--check` (`scripts/check.sh`), `--check-timeout` (60 minutes), `--attempts` (3),
-`--max-rounds` (2), `--bot LOGIN` (repeatable), `--dry-run`.
+`--max-rounds` (2), `--bot LOGIN` (repeatable), `--pr N` (repeatable: also consider PR N,
+even before the label search lists it), `--dry-run`.
 
 ## Shadow mode
 
@@ -122,9 +125,15 @@ only compares tree hashes. It is not done yet (see Limitations).
 ## Limitations
 
 - **Order** is by PR creation time, not by when `queue` was added.
-- **Verify in phase 0**: that GitHub marks a PR merged when its head reaches the base through
-  the lander's push, and that the closing keywords in the merge commit close the issues when
-  the base is not the default branch (GitHub processes them only on the default branch).
+- **Checked in the sandbox** (2026-11-14, a private throwaway repository): a merge pushed
+  to the base marks the PR merged and, with "automatically delete head branches" on, deletes
+  its branch, on the default branch and on `develop` alike. Closing keywords close issues only
+  on the default branch, hence step 6. The `queue` label filter goes through GitHub's search
+  index and showed a new label 1 to 7 s late, so the run a `labeled` event starts could miss
+  its own PR: the workflow passes that PR with `--pr`, read through `gh pr view`.
+- **Not yet checked**: whether an App's approval counts in a ruleset's required approvals,
+  and the ruleset bypass for the lander App. GitHub does not let a PR's author approve it, so
+  real merges in the sandbox need a second identity (the reviewer App).
 - **No scope-aware re-check yet**: when the base moves, the PR is checked again in full;
   `reverify-needed.sh` is not consulted.
 - **No rounds to the author**: a bounce is a comment and a label. Re-dispatching the agent

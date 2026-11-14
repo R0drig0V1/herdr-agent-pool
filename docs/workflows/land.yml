@@ -62,9 +62,11 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           REVIEWER_BOT: ${{ vars.REVIEWER_BOT_LOGIN }} # the reviewer App's login
+          # The PR whose label started this run: GitHub's label search can list it seconds late.
+          EVENT_PR: ${{ github.event.pull_request.number }}
         run: |
           git config user.name "lander[bot]"
           git config user.email "lander[bot]@users.noreply.github.com"
           # The base's own copy: a queued PR cannot change the lander that judges it.
           python3 .github/lander/land.py --base "$BASE" \
-            --bot "$REVIEWER_BOT"
+            --bot "$REVIEWER_BOT" ${EVENT_PR:+--pr "$EVENT_PR"}
