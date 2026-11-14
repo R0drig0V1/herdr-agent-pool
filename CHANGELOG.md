@@ -11,6 +11,13 @@ All notable changes to this project are documented here. The format follows
 Lessons from the project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Added
+- `docs/ci-workflows.md`: recommendations for a project's own CI under many agents. Test each
+  change once, where the gate is (never on `pull_request` and again on `push` to the base);
+  a newer run cancels an older one, also for deploys; split by toolchain; merge short jobs,
+  because each job bills at least a minute. It has reference workflows (checked with
+  actionlint and zizmor), a measurement snippet and a checklist.
+- `setup` skill, step 5: reviews `.github/workflows/` against that checklist and reports
+  what fails, read-only.
 - `resource-budget.py`: a **priority queue** for slots. Waiters write tickets; a free slot goes
   to `merge` (an integrator's `verify-merge.sh`), then `plan` (the coordinator's checks),
   then `normal`, oldest first; a ticket waiting 20 min counts as `merge`. `--priority` is

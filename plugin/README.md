@@ -352,6 +352,10 @@ A project plugs into the plugin through files at fixed paths, and nothing else.
 | `.claude/multi-agent-herdr.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, protected branches |
 | `.claude/prompts/integrator.md` | no | extra system prompt for pool integrators |
 
+The project's CI workflows are its own, and the plugin never edits them. How to keep them
+from testing each change twice or billing for superseded runs:
+[docs/ci-workflows.md](../docs/ci-workflows.md).
+
 ## Where to change what
 
 | To change... | Edit |

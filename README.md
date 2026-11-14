@@ -184,6 +184,14 @@ its own herdr workspace and verify worktree. Roles, message flows, the claim and
 protocols, failure modes and the scaling policy: [docs/multi-integrator.md](docs/multi-integrator.md).
 Switching an existing project: [docs/migration-multi-integrator.md](docs/migration-multi-integrator.md).
 
+### The project's CI
+
+Many agents push far more often than a team, so the project's own workflows run far more
+often too. [docs/ci-workflows.md](docs/ci-workflows.md) explains how to test each change once
+(not on the PR and again on the merge), cancel superseded runs and deploys, split jobs by
+toolchain and spend fewer billed minutes. It has reference workflows and a checklist, which
+`/multi-agent-herdr:setup` uses to review the project's workflows (read-only).
+
 ### Migrating a project from multi-agent
 
 1. In `.claude/settings.json`, replace `multi-agent@claude-code-multi-agent` with

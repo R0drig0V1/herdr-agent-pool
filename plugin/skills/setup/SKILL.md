@@ -87,8 +87,32 @@ No herdr configuration is required: agent placement (one workspace per agent) is
 `dispatch`. Never edit `~/.config/herdr/config.toml` unless the user asks; if they do, show
 the exact diff and get confirmation before writing.
 
-## 5. Report
+## 5. CI workflows (read-only)
+
+With many agents the project's CI runs far more often, and a setup that tests each change
+twice, never cancels superseded runs, or bills a minute for each short job becomes the
+largest cost. If `"$root"/.github/workflows/` has workflows, read them and check each item:
+
+1. No workflow runs the test suite both on `pull_request` and on `push` to the base branch.
+2. `push` is limited to branches that deploy; no `push` on every branch next to `pull_request`.
+3. Every workflow has `concurrency` with `cancel-in-progress: true`. Deploys use a group of
+   their own, at the job level when a step must not stop halfway.
+4. Jobs shorter than a minute are steps of one job (each job bills at least a minute).
+5. Audits and scans run on `paths:` of their inputs plus a weekly `schedule`.
+6. Required checks skip with job- or step-level `if:`, never with workflow-level `paths:`.
+7. Draft PRs are skipped, and the types include `ready_for_review`.
+8. Windows and macOS run by label, manually or nightly.
+9. Every job has `timeout-minutes` and caches its dependencies.
+10. Promotion to `main` fast-forwards, so it triggers no new test run.
+11. `runs-on` reads a variable, so the project can move to its own runners without editing.
+
+Report each item that fails, with the workflow and the line. The reasons, the fixes and
+reference workflows are in the plugin repository's `docs/ci-workflows.md`
+(https://github.com/R0drig0V1/herdr-agent-pool/blob/main/docs/ci-workflows.md). Never edit a
+workflow here: the project changes its CI through a pull request like any other change.
+
+## 6. Report
 
 One line each: herdr version (client/server), Claude integration state, project state
 (plugin enabled, project files, base branch, mode and the role names, old multi-agent enabled
-or not), and what was installed or skipped.
+or not), the CI checklist items that failed, and what was installed or skipped.
