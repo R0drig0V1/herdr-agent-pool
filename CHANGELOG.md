@@ -9,6 +9,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
+  a known limitation or an open question), after a duplicate search: evidence, verifiable
+  acceptance criteria, scope, risk, size and `Depends on`, using only existing labels and
+  never a label that starts work. It links the issue from the code (`TODO(#N)`), the docs and
+  the PR. The `pr` body gains a "Follow-ups" section; `document` files an issue for each known
+  limitation it documents.
 - `docs/field-evidence.md`: what the project's first week in pool mode showed, with numbers and
   sources: checks 7.5 times slower under load, the slot queue as the merge rate, 204 messages a
   day to the coordinator (about 85% mechanical), lost announcements, claims that lapse while

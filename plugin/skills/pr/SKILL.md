@@ -95,6 +95,10 @@ title and body ready to paste.
 ## Plan tasks completed
 <phase file and task lines to tick, e.g. `docs/phases/1-auth.md`: "Add login endpoint".
 Do not tick them yourself: the integrator (pool mode: the coordinator) owns docs/phases/.>
+
+## Follow-ups
+<"None", or the issues opened for work left out of this PR (/multi-agent-herdr:issue):
+#N: one line each.>
 ```
 
 End the body with the PR attribution line this environment specifies, if any.

@@ -36,6 +36,9 @@ git diff origin/<base>...HEAD --stat   # <base>: `"${CLAUDE_PLUGIN_ROOT}/scripts
    `docs/decisions/README.md`.
 5. **README.md** (root): only if setup, commands or the feature list changed.
 6. **CLAUDE.md**: only if conventions, commands or architecture rules changed. Keep it short.
+7. **Known limitations and open questions**: each one you document gets an issue
+   (`/multi-agent-herdr:issue`), and the doc links it in a line or two. The issue holds the
+   details and the acceptance criteria; the doc says the limitation exists.
 
 ## Map: code → docs
 
