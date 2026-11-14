@@ -9,6 +9,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
+  a known limitation or an open question), after a duplicate search: evidence, verifiable
+  acceptance criteria, scope, risk, size and `Depends on`, using only existing labels and
+  never a label that starts work. It links the issue from the code (`TODO(#N)`), the docs and
+  the PR. The `pr` body gains a "Follow-ups" section; `document` files an issue for each known
+  limitation it documents.
 - Guideline "move work forward proactively", in the `dispatch` and `coordinate` skills, the
   coordinator and integrator prompts, the template `CLAUDE.md` and the README. The dispatcher
   starts agents for every task that can start now, without waiting to be asked, and always

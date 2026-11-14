@@ -230,6 +230,7 @@ their settings and keep it; `/multi-agent-herdr:setup` offers to remove the key.
 | Skill | `integrate` | Integrator loop (both modes): queue (`pool-state.py queue`) -> claim (pool) -> review -> `integrate-pr.sh` -> plan (single) or merge report to the coordinator (pool) -> verdict to the author's herdr agent, "main moved" to the others |
 | Skill | `coordinate` | Pool mode, coordinator only: arbitrate resources (board, requests, save mode), scale the pool by asking its members, tick the plan from merge reports and push it under the merge lock, answer development agents, escalate blocked ones |
 | Skill | `document` | Brings docstrings, `docs/`, ADRs and `CLAUDE.md` up to date |
+| Skill | `issue` | Any role: writes a GitHub issue for work left for later (evidence, acceptance criteria, scope, risk, size, `Depends on`), after a duplicate search, and links it from the code (`TODO(#N)`), the docs and the PR |
 | Skill | `improve-plan` | Up to 3 adversarial rounds against `docs/phases/` with `plan-adversary` |
 | Skill | `setup` | User only: checks and, with confirmation, installs herdr, its Claude integration and the project files; flags the old plugin |
 | Agent | `plan-adversary`, `code-reviewer` | Read-only plan red team; read-only bug and security reviewer |
