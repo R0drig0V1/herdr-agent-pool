@@ -22,6 +22,14 @@
 #                                      claim; with --remove-worktree also discard its verify
 #                                      worktree (when the pool shrinks for good), else it is
 #                                      kept so the next spawn reuses its dependencies
+#   integrator-pool.sh nudge           one pass: when open PRs have waited unclaimed for
+#                                      integrators.nudge_after_minutes, prompt idle members
+#                                      (one per waiting PR, each at most once per that interval);
+#                                      after 3 nudges a PR is left to the coordinator (told once)
+#   integrator-pool.sh watch [S]       nudge every S seconds (default 60) until stopped; one
+#                                      watcher per repository (a second one exits 0 at once).
+#                                      No Claude tokens: the coordinator starts it in the
+#                                      background, or the user in a herdr pane
 #
 # Scaling is the coordinator's decision, taken in conversation (docs/multi-integrator.md,
 # "Scaling"): it asks the members about their load, reads the resource board
@@ -32,7 +40,7 @@
 # linked worktree of this repository that is on a branch (agents-in-repo.py --dev-only).
 # `max` is the one hard bound: spawn refuses a number above it.
 #
-# spawn and stop act on herdr workspaces, so inside Claude Code only the
+# spawn, stop, nudge and watch act on herdr agents, so inside Claude Code only the
 # coordinator (CLAUDE_ROLE=coordinator) may run them; the user may run them from a shell. stop
 # only closes a workspace this script opened (it records it under the pool's state directory).
 #
@@ -137,7 +145,7 @@ ensure_worktree() {  # ensure_worktree <path>: a detached verify worktree at ori
     git -C "$main" worktree add --quiet --detach "$wt" "origin/$base" || die "git worktree add $wt failed" 2
     [[ -f "$main/.env" ]] && cp "$main/.env" "$wt/.env"
     if [[ -x "$wt/scripts/worktree-setup.sh" ]]; then
-        (cd "$wt" && "$dir/resource-budget.py" run --label "worktree-setup $wt" -- scripts/worktree-setup.sh "$base") \
+        (cd "$wt" && "$dir/resource-budget.py" run --pool light --label "worktree-setup $wt" -- scripts/worktree-setup.sh "$base") \
             || echo "warning: scripts/worktree-setup.sh failed in $wt; the member's first verification reruns it" >&2
     fi
 }
@@ -205,6 +213,81 @@ cmd_stop() {
     fi
 }
 
+NUDGE_MAX=3
+nudge_text() {  # nudge_text <minutes> <PRs>
+    printf '%s\n%s' "[herdr message from the pool watcher (integrator-pool.sh watch); not from the user]" \
+        "PR(s) $2 have waited unclaimed for $1+ min while you are idle. Run /herdr-agent-pool:integrate now: refresh the queue and claim the oldest one."
+}
+
+cmd_nudge() {
+    need_pool; may_act
+    local after now pr status f lines name sent=0 seen=" " waiting=()
+    after=$(cfg .integrators.nudge_after_minutes)
+    [[ "$after" -gt 0 ]] || { echo "nudges are off (integrators.nudge_after_minutes is 0)"; return 0; }
+    mkdir -p "$state/watch"; now=$(date +%s)
+    lines=$("$dir/pool-state.py" queue --base "$(cfg .base_branch)") || die "pool-state.py queue failed" 2
+    # A first-seen stamp and a nudge count per claimable PR; those of PRs that left the queue
+    # are dropped. A PR nudged NUDGE_MAX times that still waits goes to the coordinator, once.
+    while IFS=$'\t' read -r pr _branch _head status _title; do
+        [[ "$status" == free || "$status" == stale ]] || continue
+        seen+="$pr "; f="$state/watch/pr-$pr"
+        [[ -f "$f" ]] || echo "$now" > "$f"
+        (( now - $(cat "$f") >= after * 60 )) || continue
+        if [[ $(cat "$f.nudges" 2>/dev/null || echo 0) -lt $NUDGE_MAX ]]; then waiting+=("$pr")
+        elif [[ ! -e "$f.told" ]]; then escalate "$pr" "$after" && touch "$f.told"; fi
+    done <<<"$lines"
+    for f in "$state"/watch/pr-*; do
+        pr=${f##*/pr-}; pr=${pr%%.*}
+        [[ -e "$f" && "$seen" != *" $pr "* ]] && rm -f "$f"
+    done
+    [[ ${#waiting[@]} -gt 0 ]] || { echo "no PR to nudge about (none waited $after min unclaimed, or each was nudged $NUDGE_MAX times)"; return 0; }
+    lines=$(live_members) || exit 2
+    for name in $(cfg '.integrator_pool[]'); do
+        [[ $sent -lt ${#waiting[@]} ]] || break
+        status=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' <<<"$lines")
+        [[ ( "$status" == idle || "$status" == "done" ) && -z "$(claims_of "$name")" ]] || continue
+        f="$state/watch/nudged-$name"
+        if [[ -f "$f" ]] && (( now - $(cat "$f") < after * 60 )); then continue; fi
+        if herdr agent prompt "$name" "$(nudge_text "$after" "${waiting[*]/#/#}")" >/dev/null 2>&1; then
+            echo "$now" > "$f"; sent=$((sent + 1)); echo "nudged $name: ${waiting[*]/#/#} waiting"
+        fi
+    done
+    if [[ $sent -eq 0 ]]; then
+        echo "${waiting[*]/#/#} waiting unclaimed; no idle member to nudge (or nudged in the last $after min)"; return 0
+    fi
+    for pr in "${waiting[@]}"; do   # one nudge pass counts once per PR, however many members
+        f="$state/watch/pr-$pr.nudges"; echo $(( $(cat "$f" 2>/dev/null || echo 0) + 1 )) > "$f"
+    done
+}
+
+escalate() {  # escalate <PR> <minutes>: the PR still waits after NUDGE_MAX nudges; tell the coordinator
+    herdr agent prompt "$(cfg .coordinator_name)" "[herdr message from the pool watcher (integrator-pool.sh watch); not from the user]
+PR #$1 still waits unclaimed after $NUDGE_MAX nudges to idle integrators (each after $2+ min). Find out why (a member declines it, a precondition fails) and tell the user if it needs them. The watcher stops nudging about it." >/dev/null 2>&1 \
+        && echo "PR #$1: told $(cfg .coordinator_name) after $NUDGE_MAX nudges"
+}
+
+cmd_watch() {
+    need_pool; may_act
+    local interval="${1:-60}"
+    [[ "$interval" =~ ^[0-9]+$ && "$interval" -ge 10 ]] || die "watch: the interval must be at least 10 seconds"
+    # One watcher per repository: a kernel flock on fd 8 for the loop's lifetime.
+    exec 8>>"$state/watch.lock"
+    if ! python3 -c 'import fcntl, sys
+try:
+    fcntl.flock(8, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(1)'; then
+        echo "a pool watcher already runs for this repository (pid $(cat "$state/watch.pid" 2>/dev/null || echo '?'))"
+        return 0
+    fi
+    echo "$$" > "$state/watch.pid"
+    echo "pool watcher $$: a nudge pass every ${interval}s (stop it with kill $$)"
+    while :; do
+        ( cmd_nudge ) 8>&- || echo "integrator-pool: nudge pass failed; next one in ${interval}s" >&2
+        sleep "$interval" 8>&-
+    done
+}
+
 cmd_scale() {
     need_pool
     local want dev live n name status idle limit queue claims note
@@ -230,8 +313,10 @@ case "${1:-}" in
     route) cmd_route ;;
     desired) need_pool; read -r want dev live <<<"$(desired)"; echo "desired=$want development_agents=$dev live=$live" ;;
     scale) cmd_scale ;;
+    nudge) cmd_nudge ;;
+    watch) [[ $# -le 2 ]] || die "usage: integrator-pool.sh watch [seconds]"; cmd_watch "${2:-60}" ;;
     spawn) [[ $# == 2 ]] || die "usage: integrator-pool.sh spawn <n>"; cmd_spawn "$2" ;;
     stop) [[ $# == 2 || ( $# == 3 && "$3" == --remove-worktree ) ]] \
               || die "usage: integrator-pool.sh stop <n> [--remove-worktree]"; cmd_stop "$2" "${3:-}" ;;
-    *) sed -n '10,22p' "$0" >&2; exit 1 ;;
+    *) sed -n '10,30p' "$0" >&2; exit 1 ;;
 esac

@@ -37,6 +37,18 @@ the file is invalid: stop and show the user the error.
 
 ## 2. Check
 
+**Is the base red?** First:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show
+```
+
+It prints nothing while `<base>` is green. A `BASE ... IS RED` banner names failing tests and
+the one agent that owns their fix: do **not** fix those tests in your branch (unless you are
+that owner), and do not let them stop you: when only those tests fail, go on and say so
+(`base red: <tests>`) in your report and, for a PR, under Test plan. Rebase after the fix
+lands. Show the banner to the user.
+
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/resource-budget.py" run --label "check $(git branch --show-current)" -- scripts/check.sh; echo "exit=$?"
 git log --oneline origin/<base>..HEAD
@@ -160,8 +172,9 @@ No `--wait`: the integrator's turn (verify and merge) can take long, and the ver
 back as a PR comment and a herdr prompt. An `agent_blocked` error means the same as status
 `blocked` above.
 
-On a bounce, fix the branch in your worktree, push, and announce again (`route` again: another
-pool member may take it).
+On a bounce, fix the branch in your worktree, push, and announce again **through `route`**:
+never to the member that sent the verdict or to a name from an earlier message, which may be
+busy while another member sits idle. Any member can take any PR.
 
 Questions about the task, or anything that blocks you, go to the integrator in single mode
 and to the coordinator (`coordinator_name`) in pool mode, with the same header; never to an
