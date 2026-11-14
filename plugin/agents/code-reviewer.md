@@ -8,7 +8,7 @@ memory: project
 ---
 
 <!--
-code-reviewer agent of the multi-agent-herdr plugin. Unchanged from multi-agent 0.1.0 apart
+code-reviewer agent of the herdr-agent-pool plugin. Unchanged from multi-agent 0.1.0 apart
 from this header.
 -->
 

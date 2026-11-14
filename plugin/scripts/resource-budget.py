@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The machine's hard floor for heavy commands: at most `heavy_slots` of them at once.
 
-Part of the multi-agent-herdr plugin (docs/multi-integrator.md, "Resources"). Resources are
+Part of the herdr-agent-pool plugin (docs/multi-integrator.md, "Resources"). Resources are
 mostly negotiated: agents note what they run on the resource board (resource-board.sh) and
 ask the coordinator for a turn. This script is the one thing that is not negotiated, because a
 conversation cannot stop a process that is already eating memory: however the negotiation
@@ -11,12 +11,12 @@ at once on this computer, across every agent and project of the user.
 `verify-merge.sh` and `new-worktree.sh` run the project's `scripts/check.sh` and
 `scripts/worktree-setup.sh` through `run`, and the `commit` and `pr` skills run the checks
 the same way. A command waits for a free slot. Slots are `flock`ed files, so the kernel frees
-the slot of a crashed holder. A command started inside a slot (`$MULTI_AGENT_HERDR_SLOT`
+the slot of a crashed holder. A command started inside a slot (`$HERDR_AGENT_POOL_SLOT`
 set) runs at once, so a nested call cannot deadlock. Waiters poll every 2 s: there is no FIFO
 order (the coordinator arbitrates priorities by conversation).
 
-Limits, machine-wide, from `~/.config/multi-agent-herdr/resources.json` (or the file in
-`$MULTI_AGENT_HERDR_RESOURCES_CONFIG`), each key optional:
+Limits, machine-wide, from `~/.config/herdr-agent-pool/resources.json` (or the file in
+`$HERDR_AGENT_POOL_RESOURCES_CONFIG`), each key optional:
 
     {"heavy_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
 
@@ -24,8 +24,8 @@ Only `heavy_slots` is enforced; the other two are the guidelines the resource bo
 the coordinator weighs (live sessions for this RAM; the free memory below which it declares
 save mode). Defaults from the machine's RAM (R GB): heavy_slots = max(1, (R - 8) // 8),
 sessions_guideline = max(2, R // 2), low_memory_gb = R / 10; a 24 GB machine gets 2, 12 and
-2.4. `$MULTI_AGENT_HERDR_HEAVY_SLOTS` overrides heavy_slots. Slot state lives in
-`~/.cache/multi-agent-herdr/resources` (or `$MULTI_AGENT_HERDR_RESOURCES_DIR`), not in a
+2.4. `$HERDR_AGENT_POOL_HEAVY_SLOTS` overrides heavy_slots. Slot state lives in
+`~/.cache/herdr-agent-pool/resources` (or `$HERDR_AGENT_POOL_RESOURCES_DIR`), not in a
 temporary directory: a sandboxed session may get its own `$TMPDIR`. Each held slot has an
 owner file `slot-<i>.json` (label, cwd, agent, pid, since) that resource-board.sh shows.
 
@@ -73,8 +73,8 @@ def total_gb() -> float:
 
 def config_path() -> str:
     home = os.path.expanduser("~")
-    default = os.path.join(home, ".config", "multi-agent-herdr", "resources.json")
-    return os.environ.get("MULTI_AGENT_HERDR_RESOURCES_CONFIG", default)
+    default = os.path.join(home, ".config", "herdr-agent-pool", "resources.json")
+    return os.environ.get("HERDR_AGENT_POOL_RESOURCES_CONFIG", default)
 
 
 def limits() -> dict[str, Any]:
@@ -105,18 +105,18 @@ def limits() -> dict[str, Any]:
             raise ValueError(f"{path}: {key} must be a number >= {floor}, got {value!r}")
         result[key] = value if key == "low_memory_gb" else int(value)
         result["source"] = path
-    env = os.environ.get("MULTI_AGENT_HERDR_HEAVY_SLOTS", "")
+    env = os.environ.get("HERDR_AGENT_POOL_HEAVY_SLOTS", "")
     if env:
         if not env.isdigit() or int(env) < 1:
-            raise ValueError(f"MULTI_AGENT_HERDR_HEAVY_SLOTS must be a positive integer: {env!r}")
+            raise ValueError(f"HERDR_AGENT_POOL_HEAVY_SLOTS must be a positive integer: {env!r}")
         result["heavy_slots"] = int(env)
     return result
 
 
 def state_dir() -> str:
     home = os.path.expanduser("~")
-    default = os.path.join(home, ".cache", "multi-agent-herdr", "resources")
-    path = os.environ.get("MULTI_AGENT_HERDR_RESOURCES_DIR", default)
+    default = os.path.join(home, ".cache", "herdr-agent-pool", "resources")
+    path = os.environ.get("HERDR_AGENT_POOL_RESOURCES_DIR", default)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -151,7 +151,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not command:
         print("resource-budget: run needs a command after --", file=sys.stderr)
         return 1
-    if os.environ.get("MULTI_AGENT_HERDR_SLOT"):  # already inside a slot: no nesting deadlock
+    if os.environ.get("HERDR_AGENT_POOL_SLOT"):  # already inside a slot: no nesting deadlock
         return subprocess.call(command)
     try:
         state_dir()
@@ -179,13 +179,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         "label": args.label or " ".join(command)[:80],
         "cwd": os.getcwd(),
         "pid": os.getpid(),
-        "agent": os.environ.get("MULTI_AGENT_HERDR_NAME", ""),
+        "agent": os.environ.get("HERDR_AGENT_POOL_NAME", ""),
         "since": time.time(),
     }
     try:
         with open(owner_file, "w") as f:
             json.dump(owner, f)
-        return subprocess.call(command, env=dict(os.environ, MULTI_AGENT_HERDR_SLOT=str(slot)))
+        return subprocess.call(command, env=dict(os.environ, HERDR_AGENT_POOL_SLOT=str(slot)))
     finally:
         with contextlib.suppress(OSError):
             os.remove(owner_file)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Shared state of the integrator pool: PR claims, bounced heads, the merge lock, plan reports.
 
-Part of the multi-agent-herdr plugin (docs/multi-integrator.md). Every integrator of a
+Part of the herdr-agent-pool plugin (docs/multi-integrator.md). Every integrator of a
 repository runs on the same machine (herdr is local), so they share the repository's git common
-dir; this script keeps the pool's state there, in `<git common dir>/multi-agent-herdr/`:
+dir; this script keeps the pool's state there, in `<git common dir>/herdr-agent-pool/`:
 
     claims/pr-<N>/owner.json   one directory per claimed PR; `mkdir` is the atomic claim
     bounced/pr-<N>.json        the head SHA last bounced, so the PR is not re-verified until
@@ -36,7 +36,7 @@ Commands:
 
 A claim is **stale** when its heartbeat is older than `integrators.claim_ttl_minutes` (default
 60), or when its owner has been missing from `herdr agent list` for
-`$MULTI_AGENT_HERDR_MISSING_GRACE` seconds (default 180; when herdr cannot be asked, only the
+`$HERDR_AGENT_POOL_MISSING_GRACE` seconds (default 180; when herdr cannot be asked, only the
 age counts). Every read-decide-write of the claims (claim, release, heartbeat, bounce, queue)
 holds `claims/.lock` (a kernel flock), so two integrators that both find a claim stale cannot
 both take it, and a release cannot remove a claim that changed hands in between.
@@ -75,7 +75,7 @@ import sys
 import time
 from typing import Any
 
-STATE = "multi-agent-herdr"
+STATE = "herdr-agent-pool"
 EXIT_HELD = 3
 EXIT_IDENTITY = 4
 HERDR_TIMEOUT = 10  # seconds; a hung herdr must not freeze the pool (claims/.lock is held)
@@ -85,7 +85,7 @@ EXIT_COMMAND_TIMEOUT = 125
 FRESH_CLAIM_SECONDS = 60  # a claim directory without owner.json yet is being created
 # A live-looking owner missing from `herdr agent list` is only presumed dead after this many
 # seconds (one glitchy listing must not hand its PR to a second integrator).
-MISSING_GRACE = float(os.environ.get("MULTI_AGENT_HERDR_MISSING_GRACE", "180"))
+MISSING_GRACE = float(os.environ.get("HERDR_AGENT_POOL_MISSING_GRACE", "180"))
 
 
 def _load_project_config() -> Any:
@@ -507,7 +507,7 @@ def lock_status(state: State) -> int:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--state-dir", help="default: <git common dir>/multi-agent-herdr")
+    p.add_argument("--state-dir", help="default: <git common dir>/herdr-agent-pool")
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("claim", "release", "heartbeat", "bounce"):
         c = sub.add_parser(name)

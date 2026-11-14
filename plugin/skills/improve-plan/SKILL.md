@@ -5,7 +5,7 @@ argument-hint: "[phase file or folder under docs/phases/] (default: all)"
 ---
 
 <!--
-improve-plan skill of the multi-agent-herdr plugin. Unchanged from multi-agent 0.1.0's
+improve-plan skill of the herdr-agent-pool plugin. Unchanged from multi-agent 0.1.0's
 `improve-plan` skill apart from this header.
 -->
 

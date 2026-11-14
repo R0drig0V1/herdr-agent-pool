@@ -6,7 +6,7 @@
 # Usage: scripts/coordinator.sh [extra claude arguments]
 #        scripts/coordinator.sh --print-name   (print the coordinator's herdr name and exit)
 #
-# - Pool mode is on when .claude/multi-agent-herdr.json has an "integrators" object; without
+# - Pool mode is on when .claude/herdr-agent-pool.json has an "integrators" object; without
 #   one, launch scripts/integrator.sh instead (single-integrator mode).
 # - Runs in the main worktree whatever directory it is called from, and requires herdr
 #   (HERDR_ENV=1). The plugin's SessionStart hook gives the session its herdr name,
@@ -33,7 +33,7 @@ default_name() {
     printf '%s\n' "$name" | sed -E 's/[-_]+$//'
 }
 name=$(default_name "$repo_root")
-settings=.claude/multi-agent-herdr.json
+settings=.claude/herdr-agent-pool.json
 pool=false
 if [[ -f "$settings" ]]; then
     name=$(jq -r --arg d "$name" '.coordinator_name // $d' "$settings") \
@@ -45,6 +45,6 @@ if [[ "${1:-}" == --print-name ]]; then  # used by the plugin's tests; launches 
     exit 0
 fi
 $pool || { echo "single-integrator mode (no \"integrators\" in $settings): run scripts/integrator.sh" >&2; exit 1; }
-[[ "${HERDR_ENV:-}" == 1 ]] || { echo "run it inside a herdr pane (multi-agent-herdr is herdr only)" >&2; exit 1; }
+[[ "${HERDR_ENV:-}" == 1 ]] || { echo "run it inside a herdr pane (herdr-agent-pool is herdr only)" >&2; exit 1; }
 CLAUDE_ROLE=coordinator exec claude --name "$name" \
     --append-system-prompt-file "$repo_root/.claude/prompts/coordinator.md" "$@"

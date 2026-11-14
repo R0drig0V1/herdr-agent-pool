@@ -3,7 +3,7 @@
 #
 # Usage: scripts/check.sh
 #
-# The single entry point used by the /multi-agent-herdr:commit and :pr skills and by verify-merge.sh,
+# The single entry point used by the /herdr-agent-pool:commit and :pr skills and by verify-merge.sh,
 # so the definition of green lives in one place. Exit code 0 means every check passed.
 # Formatters must run in check mode here (never rewrite files): the integrator runs this in
 # the main worktree. In pool mode several integrators run it at the same time, each in its own

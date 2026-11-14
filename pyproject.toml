@@ -2,7 +2,7 @@
 # Python files run under the system python3 (3.9+) with no dependencies; this file only pins
 # the linters CI and contributors run with `uv run` (versions locked in uv.lock).
 [project]
-name = "claude-code-herdr-dev"
+name = "herdr-agent-pool-dev"
 version = "0"
 requires-python = ">=3.9"
 

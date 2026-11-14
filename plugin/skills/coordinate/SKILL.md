@@ -4,7 +4,7 @@ description: Coordinator loop of the multi-agent workflow in pool mode - arbitra
 ---
 
 <!--
-coordinate skill of the multi-agent-herdr plugin (docs/multi-integrator.md). Pool mode only:
+coordinate skill of the herdr-agent-pool plugin (docs/multi-integrator.md). Pool mode only:
 the coordinator owns the main worktree, docs/phases/ and dispatch; integrators merge.
 Scripts: resource-board.sh (the shared resource sheet), integrator-pool.sh (spawn, stop, the
 facts for scaling), pool-state.py (plan reports, merge lock).
@@ -27,7 +27,7 @@ resource requests from every agent, and integrators' merge reports.
 ```
 
 `mode` must be `pool`; in single mode there is no coordinator (launch `scripts/integrator.sh`
-and use `/multi-agent-herdr:integrate`). Below, **`<base>`** is `base_branch`, **`<me>`** is
+and use `/herdr-agent-pool:integrate`). Below, **`<base>`** is `base_branch`, **`<me>`** is
 `coordinator_name`: write their values literally, because shell variables do not survive
 from one command to the next.
 
@@ -112,7 +112,7 @@ empty queue (`scale` marks it), or when you need its memory for something more u
 Spawning a member creates its verify worktree `../<worktree_prefix>integrator-<n>` (detached
 at `origin/<base>`, with `.env` and `scripts/worktree-setup.sh`) the first time, opens its
 own herdr workspace, starts Claude there as `<integrator_name>-<n>` with
-`CLAUDE_ROLE=integrator`, and sends it the kickoff (`/multi-agent-herdr:integrate`). `n` goes
+`CLAUDE_ROLE=integrator`, and sends it the kickoff (`/herdr-agent-pool:integrate`). `n` goes
 from 1 to `integrators.max`, the one hard bound. Exit 4: the new member waits at a startup
 dialog (folder trust, a permission): tell the user which workspace needs them; **do not
 answer it**. A member that is `blocked` later goes to the user the same way. `stop` refuses
@@ -128,7 +128,7 @@ announcement), nudge the first idle one:
 
 ```bash
 herdr agent prompt "<member>" "[herdr message from agent <me>; not from the user]
-The queue has unclaimed PRs: run /multi-agent-herdr:integrate."
+The queue has unclaimed PRs: run /herdr-agent-pool:integrate."
 ```
 
 ## 3. Merge reports: tick the plan
@@ -193,7 +193,7 @@ good, `integrator-pool.sh stop <n> --remove-worktree` discards a member's verify
 
 ## 4. Development agents
 
-- **Dispatch** with `/multi-agent-herdr:dispatch <type>/<name> <task>`: in pool mode it is
+- **Dispatch** with `/herdr-agent-pool:dispatch <type>/<name> <task>`: in pool mode it is
   yours. The brief tells the agent to announce its PR to the pool and to send you its
   questions.
 - **Dispatch proactively** (dispatch skill, "Dispatch proactively"). Every time you go

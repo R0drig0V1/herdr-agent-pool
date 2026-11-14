@@ -1,17 +1,17 @@
 {
-  "name": "claude-code-herdr",
+  "name": "herdr-agent-pool",
   "owner": {
     "name": "Rodrigo Vidal",
     "url": "https://github.com/R0drig0V1"
   },
   "metadata": {
-    "description": "Multi-agent development workflow for Claude Code inside herdr: integrator-owned main, one git worktree and one herdr workspace per development agent."
+    "description": "Many Claude Code agents on one repository inside herdr: a coordinator, a pool of parallel integrators with atomic PR claims and a merge lock, negotiated machine resources, one git worktree and one herdr workspace per development agent."
   },
   "plugins": [
     {
-      "name": "multi-agent-herdr",
+      "name": "herdr-agent-pool",
       "source": "./plugin",
-      "description": "Skills, agents, guard hooks and notifications for running several Claude Code agents in parallel on one repository, coordinated through herdr.",
+      "description": "Three levels of agents on one repository inside herdr: a coordinator, a pool of integrators and the development agents. Skills, agents, guard hooks, a resource budget and notifications. Formerly multi-agent-herdr@claude-code-herdr.",
       "category": "development"
     }
   ]

@@ -1,10 +1,10 @@
 {
   "extraKnownMarketplaces": {
-    "claude-code-herdr": {
+    "herdr-agent-pool": {
       "source": { "source": "github", "repo": "R0drig0V1/herdr-agent-pool" }
     }
   },
   "enabledPlugins": {
-    "multi-agent-herdr@claude-code-herdr": true
+    "herdr-agent-pool@herdr-agent-pool": true
   }
 }

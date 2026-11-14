@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List the live herdr agents that work inside a worktree of the current git repository.
 
-Part of the multi-agent-herdr plugin. The `integrate` skill uses it to resolve the author of
+Part of the herdr-agent-pool plugin. The `integrate` skill uses it to resolve the author of
 a pull request (branch -> worktree -> herdr agent) and the other live development agents to
 tell that `main` moved; the `pr` skill uses it to find this repository's integrator (herdr
 names are unique per server, not per repository, so a name alone could reach another

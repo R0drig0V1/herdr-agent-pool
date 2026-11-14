@@ -4,7 +4,7 @@ description: Write a GitHub issue for work that is left for later - a bug, debt,
 ---
 
 <!--
-issue skill of the multi-agent-herdr plugin. Every role may use it. The body format is the one
+issue skill of the herdr-agent-pool plugin. Every role may use it. The body format is the one
 a planner or a dispatcher can act on later: verifiable acceptance criteria, scope, risk, size
 and "Depends on".
 -->
@@ -138,9 +138,9 @@ The issue number goes wherever someone would otherwise rediscover the problem:
 - **Docs**: a known limitation or an open question goes in the page that documents that area
   (a "Limitations" or "Open questions" section), one or two lines with the link. The issue
   holds the details; the doc says the limitation exists.
-- **Your PR**: list it under "Follow-ups" in the PR body (`/multi-agent-herdr:pr`).
+- **Your PR**: list it under "Follow-ups" in the PR body (`/herdr-agent-pool:pr`).
 
-Commit those links with your work (`/multi-agent-herdr:commit`).
+Commit those links with your work (`/herdr-agent-pool:commit`).
 
 ## 6. Report
 

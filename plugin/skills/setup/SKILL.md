@@ -1,11 +1,11 @@
 ---
 name: setup
-description: Check and, with the user's confirmation, install what the multi-agent-herdr plugin needs - the herdr binary, herdr's Claude integration and the project files - and detect the old multi-agent plugin enabled in the same project. Only when the user runs /multi-agent-herdr:setup.
+description: Check and, with the user's confirmation, install what the herdr-agent-pool plugin needs - the herdr binary, herdr's Claude integration and the project files - and detect the old multi-agent plugin enabled in the same project. Only when the user runs /herdr-agent-pool:setup.
 disable-model-invocation: true
 ---
 
 <!--
-setup skill of the multi-agent-herdr plugin. User-invoked only (disable-model-invocation) and
+setup skill of the herdr-agent-pool plugin. User-invoked only (disable-model-invocation) and
 never run from a hook. It checks first and changes anything only after an explicit
 confirmation for each step. Install command from https://herdr.dev/agent-guide.md;
 integration commands from `herdr integration` (herdr 0.9.5).
@@ -52,14 +52,19 @@ herdr integration install claude
 root=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
 for f in "$root"/.claude/settings.json "$root"/.claude/settings.local.json; do
   [ -f "$f" ] && jq -r --arg f "$f" '.enabledPlugins // {} | to_entries[]
-    | select(.key | test("^multi-agent(-herdr)?@")) | "\($f): \(.key) = \(.value)"' "$f"
+    | select(.key | test("^(multi-agent(-herdr)?|herdr-agent-pool)@")) | "\($f): \(.key) = \(.value)"' "$f"
 done
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+ls -d "$root"/.claude/multi-agent-herdr.json "$common"/multi-agent-herdr \
+      ~/.config/multi-agent-herdr ~/.cache/multi-agent-herdr 2>/dev/null   # names before 2026-11
+grep -rln -e '/multi-agent-herdr:' -e 'MULTI_AGENT_HERDR_' "$root"/CLAUDE.md "$root"/.claude/prompts \
+      "$root"/scripts 2>/dev/null
 ls "$root"/scripts/check.sh "$root"/scripts/integrator.sh "$root"/.claude/prompts/integrator.md \
    "$root"/scripts/coordinator.sh "$root"/.claude/prompts/coordinator.md
 "${CLAUDE_PLUGIN_ROOT}/scripts/project-config.py" --root "$root"; echo "exit=$?"
 ```
 
-- The settings (`.claude/multi-agent-herdr.json`): report `base_branch`,
+- The settings (`.claude/herdr-agent-pool.json`): report `base_branch`,
   `integrator_name` and `mode`. In pool mode (`integrators` set) also report
   `coordinator_name` and the pool's names, and check that `scripts/coordinator.sh` and
   `.claude/prompts/coordinator.md` exist (the installer copies them; an older project needs
@@ -80,6 +85,13 @@ ls "$root"/scripts/check.sh "$root"/scripts/integrator.sh "$root"/.claude/prompt
   ones send sessions to `/multi-agent:worktree` + `EnterWorktree`, which this plugin replaces
   with `dispatch`. Show the user the `enabledPlugins` line to remove (or set to `false`) and
   change it only after they confirm.
+- **Names from before 2026-11** (the plugin was `multi-agent-herdr@claude-code-herdr`; README,
+  "Renamed from multi-agent-herdr"): the plugin no longer reads them. A project that only has
+  `.claude/multi-agent-herdr.json` runs on the defaults (single mode), and old state or limits
+  directories are ignored. Report each one found with its move from the README, and make the
+  moves only after the user confirms, with every session of the project stopped.
+  `multi-agent-herdr@claude-code-herdr` enabled may also be the separate two-level plugin:
+  check which repository the `claude-code-herdr` marketplace entry names before changing it.
 
 ## 4. herdr config
 

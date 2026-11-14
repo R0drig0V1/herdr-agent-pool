@@ -4,7 +4,7 @@ description: Integrator loop for the multi-agent workflow - take the open pull r
 ---
 
 <!--
-integrate skill of the multi-agent-herdr plugin. Ported from multi-agent 0.1.0's `integrate`
+integrate skill of the herdr-agent-pool plugin. Ported from multi-agent 0.1.0's `integrate`
 skill; herdr verdicts resolved by scripts/agents-in-repo.py. Pool mode
 (docs/multi-integrator.md): PR claims and the merge lock in scripts/pool-state.py, the merge
 itself in scripts/integrate-pr.sh (also used in single mode). Command syntax from
@@ -34,9 +34,9 @@ There are two modes (`mode` in the project settings):
 
 Below, **`<base>`** is `base_branch` (default `main`), **`<coordinator>`** is
 `coordinator_name`, and **`<me>`** is your herdr name: `integrator_name` in single mode, the
-value of `$MULTI_AGENT_HERDR_NAME` in pool mode (`echo "$MULTI_AGENT_HERDR_NAME"`). Write the
+value of `$HERDR_AGENT_POOL_NAME` in pool mode (`echo "$HERDR_AGENT_POOL_NAME"`). Write the
 values literally into every command, because shell variables do not survive from one command
-to the next. A non-zero exit means `.claude/multi-agent-herdr.json` is invalid: stop and show
+to the next. A non-zero exit means `.claude/herdr-agent-pool.json` is invalid: stop and show
 the user the error.
 
 ```bash
@@ -147,7 +147,7 @@ it refuses when two rows share a key (two PRs took the same ADR number: bounce).
 
 The verification takes one of the machine's heavy slots (`resource-budget.py`, shared with
 every agent on the computer), so it may first wait; `resource-board.sh show` says for whom.
-Never set `MULTI_AGENT_HERDR_SLOT` (or `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`) in a command:
+Never set `HERDR_AGENT_POOL_SLOT` (or `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`) in a command:
 the guard blocks it, because those variables decide who an agent is.
 In pool mode, a `RESOURCE YIELD` or `SAVE MODE ON` from the coordinator means: finish the
 PR in progress, then do not claim the next one until it says otherwise.
@@ -178,7 +178,7 @@ herdr agent prompt "<coordinator>" "$REPORT"; echo "exit=$?"
 ```
 
 If the coordinator is not live or is `blocked`, do not send: the recorded report waits for
-it (`/multi-agent-herdr:coordinate` reads pending reports when it starts).
+it (`/herdr-agent-pool:coordinate` reads pending reports when it starts).
 
 ## 5. Report back
 
@@ -258,7 +258,7 @@ branch is the user's call. Exit 6: the workspace holds something else; ask the u
 
 Then go back to step 1 until the queue is empty. When it is empty, clean up what `--list`
 shows as `ready`, go to step 6 if it applies, then stay idle: the next announcement wakes you. As a fallback for lost messages the
-user (or, in pool mode, the coordinator's kickoff) can run `/loop 30m /multi-agent-herdr:integrate`.
+user (or, in pool mode, the coordinator's kickoff) can run `/loop 30m /herdr-agent-pool:integrate`.
 
 ## 6. Promotion (only when `<base>` is not `main`)
 

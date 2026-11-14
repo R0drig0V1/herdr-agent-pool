@@ -4,7 +4,7 @@ description: Bring the documentation of this repository up to date with the code
 ---
 
 <!--
-document skill of the multi-agent-herdr plugin. Unchanged from multi-agent 0.1.0's
+document skill of the herdr-agent-pool plugin. Unchanged from multi-agent 0.1.0's
 `document` skill apart from this header.
 -->
 
@@ -37,7 +37,7 @@ git diff origin/<base>...HEAD --stat   # <base>: `"${CLAUDE_PLUGIN_ROOT}/scripts
 5. **README.md** (root): only if setup, commands or the feature list changed.
 6. **CLAUDE.md**: only if conventions, commands or architecture rules changed. Keep it short.
 7. **Known limitations and open questions**: each one you document gets an issue
-   (`/multi-agent-herdr:issue`), and the doc links it in a line or two. The issue holds the
+   (`/herdr-agent-pool:issue`), and the doc links it in a line or two. The issue holds the
    details and the acceptance criteria; the doc says the limitation exists.
 
 ## Map: code → docs

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SessionStart hook: tell development sessions opened in the main worktree not to develop there.
 #
-# Part of the multi-agent-herdr plugin (ported from multi-agent 0.1.0's hook of the same name).
+# Part of the herdr-agent-pool plugin (ported from multi-agent 0.1.0's hook of the same name).
 # The main worktree (the original checkout, branch main) belongs to the integrator (see
 # "Multi-agent workflow" in CLAUDE.md). In this plugin development agents do not create their
-# own worktree from here: the integrator starts each one with /multi-agent-herdr:dispatch,
+# own worktree from here: the integrator starts each one with /herdr-agent-pool:dispatch,
 # already inside its own worktree and its own herdr workspace, because the integrator finds an
 # agent by the cwd of its herdr pane (EnterWorktree would leave that cwd in the main worktree).
 # A session started here without CLAUDE_ROLE=integrator therefore gets instructions injected
@@ -41,7 +41,7 @@ code are fine here.
 
 Do not change files, commit, switch branches or push from here: hooks block it. When the
 user's request needs changes, tell them in one line that development agents are started by
-the integrator (in pool mode: the coordinator) agent with /multi-agent-herdr:dispatch <type>/<short-kebab-name> <task>, which
+the integrator (in pool mode: the coordinator) agent with /herdr-agent-pool:dispatch <type>/<short-kebab-name> <task>, which
 creates the worktree and opens a new agent in its own herdr workspace, and suggest the branch
 name (type: feat, fix, docs, chore, refactor, test). Do not create a worktree or call
 EnterWorktree yourself.
