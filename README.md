@@ -176,6 +176,8 @@ Add an `integrators` object to `.claude/multi-agent-herdr.json`, launch
 its own herdr workspace and verify worktree. Roles, message flows, the claim and lock
 protocols, failure modes and the scaling policy: [docs/multi-integrator.md](docs/multi-integrator.md).
 Switching an existing project: [docs/migration-multi-integrator.md](docs/migration-multi-integrator.md).
+What we measured in the first week of pool mode (delays, bottlenecks, slow checks,
+communication overhead, CI cost): [docs/field-evidence.md](docs/field-evidence.md).
 
 ### Migrating a project from multi-agent
 
