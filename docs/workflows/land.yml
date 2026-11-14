@@ -1,0 +1,70 @@
+# Reference lander workflow for a project that uses herdr-agent-pool (docs/lander.md).
+# Copy it to the project's .github/workflows/land.yml, and plugin/scripts/land.py (one file,
+# standard library only) to the project's .github/lander/land.py; adapt the marked lines. It
+# is not installed by install.sh: it needs a runner with the `ci` label (runner-host) and a
+# GitHub App that may push the base branch (the lander App), configured first.
+#
+# One concurrency group per base branch makes this the only writer of the base: a run never
+# overlaps another, and each run drains the whole queue, so the pending runs GitHub discards
+# lose nothing.
+name: land
+
+on:
+  # These events run the workflow file of the default branch, never a PR's own copy: with
+  # `pull_request`, a same-repository PR could edit land.yml and get the lander's key. The
+  # lander does run PR code (the check on the merge), but only of PRs that passed review
+  # (docs/lander.md, "Security"); that is the design, so zizmor's warning is waived here.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
+    types: [labeled]
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [CI] # the project's PR workflow name: a green run may unblock a queued PR
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *" # a safety drain; drop it when the events above are enough
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: land-main # land-<base branch>
+  cancel-in-progress: false
+
+jobs:
+  land:
+    if: github.event_name != 'pull_request_target' || github.event.label.name == 'queue'
+    runs-on: [self-hosted, ci] # a runner-host `ci` slot
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      BASE: main # the project's base_branch
+    steps:
+      # A token of the lander App: the only identity the base's ruleset lets push. Labels,
+      # comments and pushes made with it trigger other workflows (GITHUB_TOKEN's do not).
+      - name: Lander token
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANDER_APP_ID }}
+          private-key: ${{ secrets.LANDER_PRIVATE_KEY }}
+          permission-contents: write # push the base, delete merged head branches
+          permission-pull-requests: write # comments and labels on PRs
+          permission-issues: read # the open base-red issue
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE }}
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: true # land.py pushes the verified merge with it
+
+      - name: Land the queue
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          REVIEWER_BOT: ${{ vars.REVIEWER_BOT_LOGIN }} # the reviewer App's login
+        run: |
+          git config user.name "lander[bot]"
+          git config user.email "lander[bot]@users.noreply.github.com"
+          # The base's own copy: a queued PR cannot change the lander that judges it.
+          python3 .github/lander/land.py --base "$BASE" \
+            --bot "$REVIEWER_BOT"

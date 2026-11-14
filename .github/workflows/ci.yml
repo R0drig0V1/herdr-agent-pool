@@ -54,3 +54,6 @@ jobs:
 
       - name: Pool mode smoke tests
         run: tests/test-pool.sh
+
+      - name: Lander smoke tests
+        run: tests/test-lander.sh
