@@ -256,6 +256,11 @@ green), `scripts/integrator.sh`, `scripts/coordinator.sh`, `.claude/prompts/inte
 
 ## Rules
 
+- **Move work forward proactively.** The dispatcher (the integrator, or the coordinator in
+  pool mode) starts an agent for every task that can start now, without waiting to be asked
+  task by task, and always starts writing code early. It does not force it: no agents for
+  designs still being decided, for work that would collide with a branch in flight, or for
+  work that a pending decision would make us amend. It tells the user what it started.
 - **Never answer another agent's approval or question dialog.** Do not `herdr agent
   send-keys`, `pane send-keys` or `pane send-text` into another agent to accept, reject or
   dismiss anything.

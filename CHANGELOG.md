@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Guideline "move work forward proactively", in the `dispatch` and `coordinate` skills, the
+  coordinator and integrator prompts, the template `CLAUDE.md` and the README. The dispatcher
+  starts agents for every task that can start now, without waiting to be asked, and always
+  starts writing code early. It does not force work: no agents for undecided designs, for
+  collisions with branches in flight, or for work a pending decision would make us amend.
+
 ## [0.2.0] - 2026-11-09
 
 This release moved to its own repository,

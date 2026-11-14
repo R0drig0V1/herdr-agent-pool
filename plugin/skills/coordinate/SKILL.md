@@ -196,6 +196,12 @@ good, `integrator-pool.sh stop <n> --remove-worktree` discards a member's verify
 - **Dispatch** with `/multi-agent-herdr:dispatch <type>/<name> <task>`: in pool mode it is
   yours. The brief tells the agent to announce its PR to the pool and to send you its
   questions.
+- **Dispatch proactively** (dispatch skill, "Dispatch proactively"). Every time you go
+  through this loop, look at the plan for tasks that can start now, and start agents for
+  them without waiting to be asked; writing code is always worth starting early. Hold back
+  only what would be forced: undecided designs, collisions with branches in flight, and
+  work that a pending decision would make you amend. The resource board sets how many agents
+  run at once.
 - **Questions** arrive as herdr messages from development agents. Answer what is a matter of
   fact or of the plan; anything that is the user's decision (scope, policy, priorities, a
   trade-off) goes to the user, and you send the user's answer back. Reply with the header:
