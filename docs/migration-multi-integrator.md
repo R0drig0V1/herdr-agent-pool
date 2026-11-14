@@ -1,5 +1,5 @@
 <!--
-Checklist for moving an existing multi-agent-herdr project (the project as the worked example)
+Checklist for moving an existing herdr-agent-pool project (the project as the worked example)
 from one integrator to pool mode: a coordinator plus N integrators (docs/multi-integrator.md).
 -->
 
@@ -13,11 +13,12 @@ the project as the example. The plugin does not edit the project; the project's 
 ## Before you switch
 
 - [ ] **Upgrade the plugin** to 0.2.0 or later (`claude plugin marketplace update
-      claude-code-herdr`, then update `multi-agent-herdr`). Restart the sessions that should
+      herdr-agent-pool`, then update `herdr-agent-pool`; a machine that still has the names
+      from before 2026-11 moves first: README, "Renamed from multi-agent-herdr"). Restart the sessions that should
       pick up the new hooks: hooks and skills load when a session starts.
 - [ ] **Write the machine's resource limits**, a new file in 0.2.0. It is per computer, not
       per project, and shared by every project:
-      `~/.config/multi-agent-herdr/resources.json`. The defaults for a 24 GB machine are
+      `~/.config/herdr-agent-pool/resources.json`. The defaults for a 24 GB machine are
       `{"heavy_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}`; only
       `heavy_slots` is enforced. the project's full check took this machine out of memory, so
       start with `{"heavy_slots": 1}` and raise it after measuring the check's peak memory
@@ -50,7 +51,7 @@ the project as the example. The plugin does not edit the project; the project's 
       `heavy_slots` plugin checks can run together. So:
       1. keep the `lockf` rule until every session (agents and integrators) runs 0.2.0;
       2. then remove it from briefs, prompts and `CLAUDE.md`, and replace it with "run the
-         full check only through `/multi-agent-herdr:commit` or `:pr`";
+         full check only through `/herdr-agent-pool:commit` or `:pr`";
       3. set `heavy_slots` to 1 (above) until two checks at once are proven to fit.
 - [ ] **Disk**: each integrator gets its own verify worktree (`../the project-integrator-<n>`)
       with its own `.venv` and `web/node_modules`, installed once by `scripts/worktree-setup.sh`
@@ -63,14 +64,14 @@ the project as the example. The plugin does not edit the project; the project's 
 - [ ] **Let the current integrator finish** the PR it is merging. Note the open PRs: they
       stay in GitHub's queue, and the pool picks them up.
 - [ ] **Stop the single integrator before the config changes.** The hooks read
-      `.claude/multi-agent-herdr.json` live from the main worktree. As soon as the
+      `.claude/herdr-agent-pool.json` live from the main worktree. As soon as the
       `integrators` object is there, a still-running single integrator loses its rights in
       the main worktree, in the middle of whatever it is doing. See "Switching over" for the
       order.
 
 ## Files in the project
 
-- [ ] `.claude/multi-agent-herdr.json`: add the pool. A starting point for 20 agents:
+- [ ] `.claude/herdr-agent-pool.json`: add the pool. A starting point for 20 agents:
 
       ```json
       {
@@ -126,14 +127,14 @@ the project as the example. The plugin does not edit the project; the project's 
        means no running session changes roles mid-command.
 4. [ ] In a herdr pane of the main worktree, run `scripts/coordinator.sh`. The SessionStart
        hook names it `coordinator-the project`.
-5. [ ] In the coordinator, run `/multi-agent-herdr:coordinate`. It checks the preconditions,
+5. [ ] In the coordinator, run `/herdr-agent-pool:coordinate`. It checks the preconditions,
        reads the resource board, looks at `integrator-pool.sh scale` (with 20 development
        agents and the settings above it suggests 3 integrators) and spawns as many as the
        queue and the machine justify, and reads pending reports.
        Answer any folder-trust dialog of a new integrator workspace yourself; agents never
        answer them.
 6. [ ] Tell the running development agents about the change. The coordinator sends each one a
-       herdr message: "announce PRs with /multi-agent-herdr:pr (it routes to the pool), send
+       herdr message: "announce PRs with /herdr-agent-pool:pr (it routes to the pool), send
        questions to coordinator-the project, and before anything heavier than the normal check
        note it on the resource board and send a RESOURCE REQUEST to coordinator-the project". The guard blocks prompts to the old name
        `integrator-the project` in pool mode, so an agent that still uses it fails safely and is
@@ -145,7 +146,7 @@ the project as the example. The plugin does not edit the project; the project's 
 
 1. [ ] Stop the pool members: `integrator-pool.sh stop <n>` for each idle member. It refuses
        members that are working or hold a claim. Wait for them to finish.
-2. [ ] Remove `integrators` (and `coordinator_name`) from `.claude/multi-agent-herdr.json` on
+2. [ ] Remove `integrators` (and `coordinator_name`) from `.claude/herdr-agent-pool.json` on
        `main`.
 3. [ ] Stop the coordinator and launch `scripts/integrator.sh` in the main worktree. The
        verify worktrees can stay (`git worktree remove ../the project-integrator-<n>` when no

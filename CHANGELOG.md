@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Renamed to `herdr-agent-pool`**, so it no longer shares its names with the separate
+  two-level plugin in claude-code-herdr: marketplace `herdr-agent-pool`, plugin id
+  `herdr-agent-pool@herdr-agent-pool`, skills `/herdr-agent-pool:<skill>`, settings
+  `.claude/herdr-agent-pool.json`, state `<git common dir>/herdr-agent-pool/`, machine files
+  under `~/.config/herdr-agent-pool/` and `~/.cache/herdr-agent-pool/`, variables
+  `HERDR_AGENT_POOL_*`. The old names are not read: README, "Renamed from multi-agent-herdr",
+  lists the moves; `setup` reports the old names a project still has. The installer also
+  turns off `multi-agent-herdr@claude-code-herdr` in a project it sets up.
+
 ### Added
 - `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
   a known limitation or an open question), after a duplicate search: evidence, verifiable

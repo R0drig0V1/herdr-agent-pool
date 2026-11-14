@@ -1,7 +1,7 @@
 #!/bin/sh
 # Stop / Notification hook: play a short sound and ring the terminal bell on the tab of the
 # Claude session that fired it, so you can tell which of several sessions finished or needs
-# attention. Part of the multi-agent-herdr plugin (unchanged from multi-agent 0.1.0;
+# attention. Part of the herdr-agent-pool plugin (unchanged from multi-agent 0.1.0;
 # herdr's sidebar shows the same done/blocked states per workspace).
 #
 # Usage: notify.sh stop|attention

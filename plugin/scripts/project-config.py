@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read the project's multi-agent-herdr settings: `.claude/multi-agent-herdr.json`.
+"""Read the project's herdr-agent-pool settings: `.claude/herdr-agent-pool.json`.
 
-Part of the multi-agent-herdr plugin. The workflow assumes, by default, that pull requests
+Part of the herdr-agent-pool plugin. The workflow assumes, by default, that pull requests
 merge into `main` and that the integrator's herdr agent is named `integrator-<repository>`
 (see `default_integrator_name`). A project that integrates into another branch (for example
 `dev`, promoted to `main` separately) or names its integrator differently says so in this
@@ -65,7 +65,7 @@ import subprocess
 import sys
 from typing import Any
 
-FILE = os.path.join(".claude", "multi-agent-herdr.json")
+FILE = os.path.join(".claude", "herdr-agent-pool.json")
 HERDR_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 PREFIX = re.compile(r"[A-Za-z0-9._-]*")
 INTEGRATOR = "integrator"

@@ -1,5 +1,5 @@
 <!--
-Design of pool mode in multi-agent-herdr: a coordinator plus N parallel integrators. Roles,
+Design of pool mode in herdr-agent-pool: a coordinator plus N parallel integrators. Roles,
 message flows, the PR claim and merge lock protocols, failure modes, the scaling policy,
 parallel verification, the machine-wide resource budget and the open policy questions.
 -->
@@ -22,10 +22,10 @@ exactly the single-integrator behaviour (same names, hooks and skills).
 | Role | Session | Worktree | Owns | Never |
 |------|---------|----------|------|-------|
 | **Coordinator** | `scripts/coordinator.sh`, `CLAUDE_ROLE=coordinator`, herdr name `coordinator_name` (default `coordinator-<repo>`) | the main worktree | the user's attention, `dispatch`, `docs/phases/`, the pool's size | merges, reviews a PR's verdict away |
-| **Integrator** (N of them) | spawned by `integrator-pool.sh spawn <n>`, `CLAUDE_ROLE=integrator`, `MULTI_AGENT_HERDR_NAME=<integrator_name>-<n>` | its own verify worktree `../<worktree_prefix>integrator-<n>`, detached at `origin/<base>` | the PRs it claimed: review, verification, merge, verdict | touches the main worktree or `docs/phases/`, pushes `<base>` outside the merge lock |
+| **Integrator** (N of them) | spawned by `integrator-pool.sh spawn <n>`, `CLAUDE_ROLE=integrator`, `HERDR_AGENT_POOL_NAME=<integrator_name>-<n>` | its own verify worktree `../<worktree_prefix>integrator-<n>`, detached at `origin/<base>` | the PRs it claimed: review, verification, merge, verdict | touches the main worktree or `docs/phases/`, pushes `<base>` outside the merge lock |
 | **Development agent** | started by `dispatch` | `../<worktree_prefix><name>` on its branch | its branch and PR | merges, pushes a protected branch, prompts anyone but the coordinator and the pool |
 
-Settings (`.claude/multi-agent-herdr.json`, read only by `project-config.py`):
+Settings (`.claude/herdr-agent-pool.json`, read only by `project-config.py`):
 
 ```json
 {
@@ -101,7 +101,7 @@ and a lost announcement only delays a PR until the next member looks.
 
 ## PR claims
 
-State lives in the repository's git common dir, `<common>/multi-agent-herdr/`: every
+State lives in the repository's git common dir, `<common>/herdr-agent-pool/`: every
 integrator runs on the same machine (herdr is local), so a directory there is shared by all
 of them and by nobody else.
 
@@ -111,7 +111,7 @@ of them and by nobody else.
 - **Heartbeat**: `integrate-pr.sh` refreshes it at the start and every 2 minutes during a
   verification.
 - **Stale** = the heartbeat is older than `claim_ttl_minutes`, or the owner has been missing
-  from `herdr agent list` for a grace period (`$MULTI_AGENT_HERDR_MISSING_GRACE`, 180 s by
+  from `herdr agent list` for a grace period (`$HERDR_AGENT_POOL_MISSING_GRACE`, 180 s by
   default). The first listing that misses the owner only records `missing_since`, so one
   glitchy listing cannot hand a live claim over. When herdr cannot be asked, only the age
   counts. A claim directory without `owner.json` is "being created" for 60 s, then stale.
@@ -205,10 +205,10 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
 | `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
 | `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>` | blocked | blocked | allowed | allowed |
-| Setting `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`, `MULTI_AGENT_HERDR_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
+| Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
-| Anything above, while `.claude/multi-agent-herdr.json` is invalid | blocked | blocked | blocked | blocked (fail closed; the file itself may be edited) |
+| Anything above, while `.claude/herdr-agent-pool.json` is invalid | blocked | blocked | blocked | blocked (fail closed; the file itself may be edited) |
 
 \* Allowed by the guard because these roles start and message agents; the rule "never answer
 another agent's dialog" stays a rule of their skills and prompts.
@@ -254,7 +254,7 @@ agent's own is not inspected.
 | One herdr listing misses a live integrator | its claim is marked `missing_since`, not taken | the next listing that shows it clears the mark (its heartbeat rewrites the claim) |
 | A claim changes hands anyway during a long verification | the first integrator re-checks its claim under the merge lock | it pushes nothing (exit 10) and leaves the PR to the new owner |
 | The push under the merge lock hangs | killed after 600 s (`lock run --max-seconds`) | the claim is released and the PR goes back to the queue (exit 6) |
-| `.claude/multi-agent-herdr.json` becomes invalid | every role loses its rights (fail closed) | fix the file (the Edit guard allows that one file); `project-config.py` names the error |
+| `.claude/herdr-agent-pool.json` becomes invalid | every role loses its rights (fail closed) | fix the file (the Edit guard allows that one file); `project-config.py` names the error |
 | The machine runs out of memory | every agent loses its turn | prevented by the resource budget below |
 
 ## Scaling
@@ -330,13 +330,13 @@ Resources are therefore **negotiated**, not computed. The coordinator is the arb
   `new-worktree.sh` for `worktree-setup.sh`, and the `commit` and `pr` skills for the checks.
 - It stays code because a conversation cannot stop a process that is already allocating
   memory. When memory is scarce, agents answer late or not at all.
-- Slots are `flock`ed files in `~/.cache/multi-agent-herdr/resources/`, so a crashed holder
-  frees its slot. A nested call (`$MULTI_AGENT_HERDR_SLOT` set) runs at once instead of
+- Slots are `flock`ed files in `~/.cache/herdr-agent-pool/resources/`, so a crashed holder
+  frees its slot. A nested call (`$HERDR_AGENT_POOL_SLOT` set) runs at once instead of
   deadlocking.
 - Waiters poll every 2 s with no FIFO order: who goes first is the coordinator's call.
 - Its limits:
   - it binds only the commands run through it, not a suite an agent starts by hand;
-  - setting `MULTI_AGENT_HERDR_SLOT` would skip it, so the guard blocks that;
+  - setting `HERDR_AGENT_POOL_SLOT` would skip it, so the guard blocks that;
   - when its state directory cannot be created it warns and runs the command anyway, so the
     floor never makes a verification fail;
   - an invalid `resources.json` makes every wrapped command fail. `resource-budget.py
@@ -383,7 +383,7 @@ them decide. Agents never close another agent's workspace, except a pool member 
 memory). That is why the protocol is hub-and-spoke through the coordinator, and why an agent
 asks only for what goes beyond a normal check. The normal check just waits for its slot.
 
-Limits are per machine, in `~/.config/multi-agent-herdr/resources.json`, overriding defaults
+Limits are per machine, in `~/.config/herdr-agent-pool/resources.json`, overriding defaults
 derived from the RAM. Only `heavy_slots` is enforced; the other two are guidelines the board
 shows and the coordinator weighs:
 

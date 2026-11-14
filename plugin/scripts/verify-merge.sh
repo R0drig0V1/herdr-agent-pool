@@ -26,7 +26,7 @@
 # Steps 2 and 3 run inside one of the machine's heavy slots (resource-budget.py run), so they
 # may first wait for another agent's check to finish.
 #
-# Part of the multi-agent-herdr plugin (unchanged from multi-agent 0.1.0); the scripts above belong to the project and are resolved
+# Part of the herdr-agent-pool plugin (unchanged from multi-agent 0.1.0); the scripts above belong to the project and are resolved
 # from the repository of the current directory.
 #
 # Only for the integrator.

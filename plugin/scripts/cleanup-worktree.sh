@@ -2,7 +2,7 @@
 # Discard a development worktree that served its purpose: its herdr workspace, the worktree
 # and its local branch (and the remote branch, if it is still the merged head).
 #
-# Part of the multi-agent-herdr plugin (docs/multi-integrator.md, "Cleanup"). A worktree whose
+# Part of the herdr-agent-pool plugin (docs/multi-integrator.md, "Cleanup"). A worktree whose
 # branch has been merged has done its job; left behind, it keeps a Claude session, its memory
 # and its dependencies alive, and the branch list grows without end. The one who dispatched
 # the agent cleans up after the merge: the integrator in single mode, the coordinator in pool

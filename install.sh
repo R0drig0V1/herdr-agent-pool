@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the multi-agent-herdr workflow into the git repository of the current directory.
+# Install the herdr-agent-pool workflow into the git repository of the current directory.
 #
 # Part of herdr-agent-pool (ported from claude-code-multi-agent 0.1.0's install.sh; only the
 # repository, plugin id and next steps differ).
@@ -16,7 +16,8 @@
 # - Enables the plugin for the project in .claude/settings.json: copied when absent, merged
 #   with jq when present (the snippet is printed when jq is missing). An enabled old
 #   multi-agent@claude-code-multi-agent plugin, which this one replaces, is set to false there:
-#   both plugins' guards would run otherwise.
+#   both plugins' guards would run otherwise. So is multi-agent-herdr@claude-code-herdr, the
+#   separate two-level plugin (also this plugin's id before the 2026-11 rename).
 # - Appends the missing .gitignore lines.
 # The plugin itself (skills, agents, hooks, worktree and verify scripts) is not copied: Claude
 # Code installs it from the marketplace the settings point at, and updates it from there.
@@ -25,9 +26,12 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/R0drig0V1/herdr-agent-pool.git"
-MARKETPLACE="claude-code-herdr"
-PLUGIN="multi-agent-herdr@${MARKETPLACE}"
-OLD_PLUGIN="multi-agent@claude-code-multi-agent"   # the plugin this one replaces
+MARKETPLACE="herdr-agent-pool"
+PLUGIN="herdr-agent-pool@${MARKETPLACE}"
+OLD_PLUGINS=(
+    "multi-agent@claude-code-multi-agent"   # the plugin this one replaces
+    "multi-agent-herdr@claude-code-herdr"   # the two-level plugin: never both in one project
+)
 
 dry_run=false
 force=false
@@ -92,12 +96,14 @@ elif command -v jq >/dev/null 2>&1; then
     enabled() { jq -e --arg id "$1" '.enabledPlugins[$id] == true' "$settings" >/dev/null; }
     settings_note="merged the marketplace and plugin into it"
     enabled "$PLUGIN" && settings_note="already enables $PLUGIN"
-    if enabled "$OLD_PLUGIN"; then
-        settings_note+="; disabled $OLD_PLUGIN (replaced by $PLUGIN)"
-    fi
+    for old in "${OLD_PLUGINS[@]}"; do
+        if enabled "$old"; then settings_note+="; disabled $old (replaced by $PLUGIN)"; fi
+    done
     if ! $dry_run && [[ "$settings_note" != "already enables $PLUGIN" ]]; then
-        merged=$(jq -s --arg old "$OLD_PLUGIN" \
-            '(.[0] * .[1]) | if .enabledPlugins[$old] == true then .enabledPlugins[$old] = false else . end' \
+        olds=$(printf '%s\n' "${OLD_PLUGINS[@]}" | jq -R . | jq -s .)
+        merged=$(jq -s --argjson olds "$olds" \
+            '(.[0] * .[1]) | reduce $olds[] as $old (.;
+                if .enabledPlugins[$old] == true then .enabledPlugins[$old] = false else . end)' \
             "$settings" "$src/template/.claude/settings.json")
         printf '%s\n' "$merged" > "$settings"
     fi
@@ -106,10 +112,12 @@ else
 fi
 # settings.local.json is the user's own file: warn, do not edit it.
 local_settings="$target/.claude/settings.local.json"
-if [[ -f "$local_settings" ]] && command -v jq >/dev/null 2>&1 \
-    && jq -e --arg id "$OLD_PLUGIN" '.enabledPlugins[$id] == true' "$local_settings" >/dev/null 2>&1; then
-    settings_note+="${settings_note:+; }WARNING: .claude/settings.local.json still enables $OLD_PLUGIN: set it to false"
-fi
+for old in "${OLD_PLUGINS[@]}"; do
+    if [[ -f "$local_settings" ]] && command -v jq >/dev/null 2>&1 \
+        && jq -e --arg id "$old" '.enabledPlugins[$id] == true' "$local_settings" >/dev/null 2>&1; then
+        settings_note+="${settings_note:+; }WARNING: .claude/settings.local.json still enables $old: set it to false"
+    fi
+done
 
 # .gitignore lines.
 gitignore="$target/.gitignore"
@@ -127,7 +135,7 @@ for line in ".claude/settings.local.json" ".env"; do
 done
 
 $dry_run && echo "dry run: nothing was written" && echo
-echo "multi-agent-herdr workflow -> $target"
+echo "herdr-agent-pool workflow -> $target"
 for f in ${copied[@]+"${copied[@]}"}; do echo "  + $f"; done
 for f in ${skipped[@]+"${skipped[@]}"}; do echo "  = $f (exists, kept; --force to overwrite)"; done
 [[ -n "$settings_note" ]] && echo "  ~ .claude/settings.json: $settings_note"
@@ -146,13 +154,13 @@ Next steps:
      plugin. Or install it explicitly:
        claude plugin marketplace add R0drig0V1/herdr-agent-pool
        claude plugin install $PLUGIN --scope project
-     This plugin replaces multi-agent@claude-code-multi-agent: the installer sets it to false
-     in .claude/settings.json (by hand when jq is missing). Uninstall it if you no longer
-     use it elsewhere.
-  4. Inside herdr, run /multi-agent-herdr:setup once, launch the integrator with
+     This plugin replaces multi-agent@claude-code-multi-agent, and must not run next to the
+     two-level multi-agent-herdr@claude-code-herdr: the installer sets both to false in
+     .claude/settings.json (by hand when jq is missing).
+  4. Inside herdr, run /herdr-agent-pool:setup once, launch the integrator with
      scripts/integrator.sh, and start development agents from it with
-     /multi-agent-herdr:dispatch <type>/<name> <task>.
-     Many agents: add an "integrators" object to .claude/multi-agent-herdr.json and launch
+     /herdr-agent-pool:dispatch <type>/<name> <task>.
+     Many agents: add an "integrators" object to .claude/herdr-agent-pool.json and launch
      scripts/coordinator.sh instead (pool mode, docs/multi-integrator.md); set this
-     machine's limits in ~/.config/multi-agent-herdr/resources.json.
+     machine's limits in ~/.config/herdr-agent-pool/resources.json.
 EOF
