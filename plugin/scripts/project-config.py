@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read the project's multi-agent-herdr settings: `.claude/multi-agent-herdr.json`.
+"""Read the project's herdr-agent-pool settings: `.claude/herdr-agent-pool.json`.
 
-Part of the multi-agent-herdr plugin. The workflow assumes, by default, that pull requests
+Part of the herdr-agent-pool plugin. The workflow assumes, by default, that pull requests
 merge into `main` and that the integrator's herdr agent is named `integrator-<repository>`
 (see `default_integrator_name`). A project that integrates into another branch (for example
 `dev`, promoted to `main` separately) or names its integrator differently says so in this
@@ -52,7 +52,7 @@ Keys (all optional; a missing file means every default):
   when every path the merge changes matches `docs_only_paths`, `docs_only_env` is added on
   top of `check_env` (a docs-only fast lane; off while `docs_only_paths` is empty). Names
   must look like `[A-Za-z_][A-Za-z0-9_]*` and may not start with `CLAUDE_`, `HERDR_` or
-  `MULTI_AGENT_HERDR_` (identity variables); values are strings without newlines.
+  `HERDR_AGENT_POOL_` (identity variables); values are strings without newlines.
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -83,7 +83,7 @@ import subprocess
 import sys
 from typing import Any
 
-FILE = os.path.join(".claude", "multi-agent-herdr.json")
+FILE = os.path.join(".claude", "herdr-agent-pool.json")
 HERDR_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 PREFIX = re.compile(r"[A-Za-z0-9._-]*")
 INTEGRATOR = "integrator"
@@ -106,7 +106,7 @@ ZERO_OFF = ("locked_reverify_minutes", "nudge_after_minutes")
 KIND = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 VERIFY_DEFAULTS: dict[str, Any] = {"check_env": {}, "docs_only_paths": [], "docs_only_env": {}}
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-RESERVED_ENV = ("CLAUDE_", "HERDR_", "MULTI_AGENT_HERDR_")
+RESERVED_ENV = ("CLAUDE_", "HERDR_", "HERDR_AGENT_POOL_")
 DERIVED = ("mode", "integrator_pool")
 
 

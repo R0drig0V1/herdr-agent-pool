@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve a merge conflict in a Markdown index table by keeping the rows of both sides.
 
-Part of the multi-agent-herdr plugin: integrate-pr.sh runs it on the files given with
+Part of the herdr-agent-pool plugin: integrate-pr.sh runs it on the files given with
 `--union-rows PATH` (for example `docs/decisions/README.md`, where two PRs each add an ADR
 row). It is the only conflict the integrator resolves itself, because it is mechanical:
 

@@ -18,7 +18,7 @@ Only the latest `main` is supported. There are no release branches.
 
 ## Scope
 
-In scope: the `multi-agent-herdr` plugin (`plugin/`: hooks, scripts, skills, agents),
+In scope: the `herdr-agent-pool` plugin (`plugin/`: hooks, scripts, skills, agents),
 `install.sh`, `template/` and this repository's GitHub workflows. For example: a hook that
 runs injected input, a script that writes outside the repository it is given, the installer
 overwriting files it said it would not, or a workflow that leaks a token.

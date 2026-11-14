@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The resource board: a shared, human-readable sheet of what every agent runs on this machine.
 #
-# Part of the multi-agent-herdr plugin (docs/multi-integrator.md, "Resources"). Resources are
+# Part of the herdr-agent-pool plugin (docs/multi-integrator.md, "Resources"). Resources are
 # negotiated, not computed: before an agent starts something heavy or long-lived (a full test
 # suite, a build, a container, a dev server, a watcher), it writes one line about it here;
 # when it stops, it clears the line. The coordinator reads the board to grant turns, set
@@ -11,7 +11,7 @@
 # above a lowered limit) and queued waiters the board also shows.
 #
 # The board is machine-wide (every project of the user), one file per agent under
-# ${MULTI_AGENT_HERDR_RESOURCES_DIR:-~/.cache/multi-agent-herdr/resources}/board/, so agents
+# ${HERDR_AGENT_POOL_RESOURCES_DIR:-~/.cache/herdr-agent-pool/resources}/board/, so agents
 # never overwrite each other's lines.
 #
 # Usage:
@@ -23,13 +23,13 @@
 #                                   agents and the ones that look idle
 #   resource-board.sh prune         remove the lines of agents that are no longer live
 #
-# Your name is --as, else $MULTI_AGENT_HERDR_NAME, else your herdr agent name (from the live
+# Your name is --as, else $HERDR_AGENT_POOL_NAME, else your herdr agent name (from the live
 # pane), else "<user>-shell". Exit codes: 0 ok; 1 usage. Needs jq; herdr for the agent list
 # (without it the board just says so).
 set -uo pipefail
 
 dir=$(cd "$(dirname "$0")" && pwd)
-state="${MULTI_AGENT_HERDR_RESOURCES_DIR:-$HOME/.cache/multi-agent-herdr/resources}"
+state="${HERDR_AGENT_POOL_RESOURCES_DIR:-$HOME/.cache/herdr-agent-pool/resources}"
 board="$state/board"
 mkdir -p "$board" || { echo "resource-board: cannot create $board" >&2; exit 1; }
 usage() { sed -n '17,26p' "$0" >&2; exit 1; }
@@ -37,7 +37,7 @@ usage() { sed -n '17,26p' "$0" >&2; exit 1; }
 me() {  # me <--as value>: the name this line belongs to
     local pane name
     [[ -n "$1" ]] && { echo "$1"; return; }
-    [[ -n "${MULTI_AGENT_HERDR_NAME:-}" ]] && { echo "$MULTI_AGENT_HERDR_NAME"; return; }
+    [[ -n "${HERDR_AGENT_POOL_NAME:-}" ]] && { echo "$HERDR_AGENT_POOL_NAME"; return; }
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
         pane=$(herdr pane current --current 2>/dev/null | jq -r '.result.pane.pane_id // empty')
         name=$(herdr agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .name // empty')

@@ -19,7 +19,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 scripts="$root/plugin/scripts"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
-unset CLAUDE_ROLE MULTI_AGENT_HERDR_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK HERDR_ENV MULTI_AGENT_HERDR_SLOT
+unset CLAUDE_ROLE HERDR_AGENT_POOL_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK HERDR_ENV HERDR_AGENT_POOL_SLOT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # Not under a temporary directory: the Bash guard allows writes there on purpose. Each run
@@ -111,9 +111,9 @@ agents() {  # agents <name|-> <pane> <status> <cwd> ...: write the fake `herdr a
 agents
 : > "$FAKE_LOG"
 # The resource budget's state and limits, private to the tests (never ~/.cache or ~/.config).
-export MULTI_AGENT_HERDR_RESOURCES_DIR="$work/resources" MULTI_AGENT_HERDR_RESOURCES_CONFIG="$work/resources.json"
-export MULTI_AGENT_HERDR_MISSING_GRACE=0   # an owner missing from herdr is dead at once (one test sets a grace)
-budget() { printf '{"heavy_slots": 1, "sessions_guideline": %s, "low_memory_gb": 0}\n' "$1" > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"; }
+export HERDR_AGENT_POOL_RESOURCES_DIR="$work/resources" HERDR_AGENT_POOL_RESOURCES_CONFIG="$work/resources.json"
+export HERDR_AGENT_POOL_MISSING_GRACE=0   # an owner missing from herdr is dead at once (one test sets a grace)
+budget() { printf '{"heavy_slots": 1, "sessions_guideline": %s, "low_memory_gb": 0}\n' "$1" > "$HERDR_AGENT_POOL_RESOURCES_CONFIG"; }
 budget 50
 
 # A project in pool mode, with a bare origin --------------------------------------------------
@@ -122,7 +122,7 @@ git init --quiet --bare -b main "$origin"
 git init --quiet -b main "$proj"
 mkdir -p "$proj/.claude/prompts" "$proj/scripts" "$proj/docs/decisions" "$proj/docs/phases" "$proj/src"
 cp "$root/template/.claude/settings.json" "$proj/.claude/settings.json"
-cat > "$proj/.claude/multi-agent-herdr.json" <<'JSON'
+cat > "$proj/.claude/herdr-agent-pool.json" <<'JSON'
 {"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2}}
 JSON
 echo "stance" > "$proj/.claude/prompts/integrator.md"
@@ -162,7 +162,7 @@ check "project-config: pool names"               [ "$(cd "$proj" && "$pc" integr
 check "project-config: coordinator default name" [ "$(cd "$proj" && "$pc" coordinator_name)" == coordinator-proj ]
 check "project-config: dotted key and defaults"  [ "$(cd "$proj" && "$pc" integrators.claim_ttl_minutes)" == 60 ]
 long="$work/a-very-long-repository-name-that-overflows"; git init --quiet -b main "$long"; mkdir -p "$long/.claude"
-echo '{"integrators": {"max": 12}}' > "$long/.claude/multi-agent-herdr.json"
+echo '{"integrators": {"max": 12}}' > "$long/.claude/herdr-agent-pool.json"
 names=$("$pc" --root "$long" integrator_pool)
 check "project-config: long names fit 32 characters" \
     bash -c '[[ $(wc -l <<<"$1") == *12 ]] && ! grep -Evq "^[a-z][a-z0-9_-]{0,31}$" <<<"$1" && [[ "$(tail -1 <<<"$1")" == *-12 ]]' _ "$names"
@@ -174,11 +174,11 @@ for json in '{"integrators": {"min": 3, "max": 2}}' '{"integrators": {"max": 17}
             '{"integrators": {"reverify_exempt_paths": "docs/*"}}' '{"integrators": {"max_reverify": 0}}' \
             '{"integrators": {"nudge_after_minutes": -1}}' '{"numbered_files": {"adr": "docs/(a)(b)"}}' \
             '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}'; do
-    printf '%s\n' "$json" > "$bad/.claude/multi-agent-herdr.json"
+    printf '%s\n' "$json" > "$bad/.claude/herdr-agent-pool.json"
     "$pc" --root "$bad" >/dev/null 2>&1; status=$?
     check "project-config: rejects $json" [ "$status" == 1 ]
 done
-printf '%s\n' '{"integrators": {"locked_reverify_minutes": 0, "nudge_after_minutes": 0}}' > "$bad/.claude/multi-agent-herdr.json"
+printf '%s\n' '{"integrators": {"locked_reverify_minutes": 0, "nudge_after_minutes": 0}}' > "$bad/.claude/herdr-agent-pool.json"
 check "project-config: 0 turns the locked re-verify and the nudges off" \
     [ "$("$pc" --root "$bad" integrators.locked_reverify_minutes)$("$pc" --root "$bad" integrators.nudge_after_minutes)" == 00 ]
 # The template's coordinator.sh repeats the default name rule.
@@ -224,19 +224,19 @@ CLAUDE_ROLE=coordinator expect 2 "single guard: a coordinator is just a session"
 CLAUDE_ROLE=coordinator expect 2 "single edit guard: a coordinator is just a session" "$w" "$(file_op "$single/x.md")"
 CLAUDE_ROLE=integrator  expect 0 "single guard: the integrator may do everything" "$g" "$(bash_cmd 'git push origin HEAD:main && gh pr merge 3' "$single")"
 CLAUDE_ROLE=integrator  expect 0 "single edit guard: the integrator edits"     "$w" "$(file_op "$single/x.md")"
-expect 2 "guard: posing as an integrator with a prefix" "$g" "$(bash_cmd "CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1 $ipr 12" "$d1")"
-expect 2 "guard: setting the member name through env"   "$g" "$(bash_cmd 'env MULTI_AGENT_HERDR_NAME=integrator-proj-1 ls' "$d1")"
+expect 2 "guard: posing as an integrator with a prefix" "$g" "$(bash_cmd "CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=integrator-proj-1 $ipr 12" "$d1")"
+expect 2 "guard: setting the member name through env"   "$g" "$(bash_cmd 'env HERDR_AGENT_POOL_NAME=integrator-proj-1 ls' "$d1")"
 expect 2 "guard: export CLAUDE_ROLE"                    "$g" "$(bash_cmd 'export CLAUDE_ROLE=coordinator' "$d1")"
-expect 2 "guard: skipping the heavy-slot floor"         "$g" "$(bash_cmd 'MULTI_AGENT_HERDR_SLOT=1 scripts/check.sh' "$d1")"
+expect 2 "guard: skipping the heavy-slot floor"         "$g" "$(bash_cmd 'HERDR_AGENT_POOL_SLOT=1 scripts/check.sh' "$d1")"
 expect 0 "guard: other variables are fine"              "$g" "$(bash_cmd 'FOO=1 env BAR=2 ls' "$d1")"
 # The re-review's probes: env options that take an argument, wrappers in front, interpreters.
 for probe in "env -u FOO CLAUDE_ROLE=integrator $ipr 3" \
              "env -i -u A CLAUDE_ROLE=integrator $ps claim 3 --owner x" \
              "command env -u A CLAUDE_ROLE=integrator $ipr 3" \
-             "time env -u A MULTI_AGENT_HERDR_NAME=x $ipr 3" \
+             "time env -u A HERDR_AGENT_POOL_NAME=x $ipr 3" \
              "env -C /tmp CLAUDE_ROLE=integrator $ipr 3" \
              "env -S 'CLAUDE_ROLE=integrator ls'" "env -SCLAUDE_ROLE=x ls" \
-             "exec -a x env HERDR_ENV=1 ls" "env -- MULTI_AGENT_HERDR_SLOT=1 ls" \
+             "exec -a x env HERDR_ENV=1 ls" "env -- HERDR_AGENT_POOL_SLOT=1 ls" \
              "bash $ipr 3" "sh $scripts/cleanup-worktree.sh feat/x" \
              "python3 $ps claim 3 --owner x" "python3 -I $ps lock run --owner x -- true" \
              "env -u A python3 $ps bounce 3 --head h --owner x"; do
@@ -270,12 +270,12 @@ for push in "git push --force origin HEAD:main" "git push origin +HEAD:main" "gi
 done
 badpool="$work/badpool"; git init --quiet -b main "$badpool"; mkdir -p "$badpool/.claude"
 cp "$root/template/.claude/settings.json" "$badpool/.claude/settings.json"
-printf '{"integrators": {"max": 2}, "typo": 1}\n' > "$badpool/.claude/multi-agent-herdr.json"
+printf '{"integrators": {"max": 2}, "typo": 1}\n' > "$badpool/.claude/herdr-agent-pool.json"
 git -C "$badpool" add -A && git -C "$badpool" commit --quiet -m init
 CLAUDE_ROLE=integrator  expect 2 "fail closed: invalid settings, no single-mode rights" "$g" "$(bash_cmd 'git commit -m x' "$badpool")"
 CLAUDE_ROLE=integrator  expect 2 "fail closed: invalid settings, no push to main"     "$g" "$(bash_cmd 'git push origin HEAD:main' "$badpool")"
 CLAUDE_ROLE=integrator  expect 2 "fail closed: invalid settings, edits blocked"       "$w" "$(file_op "$badpool/README.md")"
-CLAUDE_ROLE=integrator  expect 0 "fail closed: the settings file itself may be fixed" "$w" "$(file_op "$badpool/.claude/multi-agent-herdr.json")"
+CLAUDE_ROLE=integrator  expect 0 "fail closed: the settings file itself may be fixed" "$w" "$(file_op "$badpool/.claude/herdr-agent-pool.json")"
 CLAUDE_ROLE=coordinator expect 2 "fail closed: the coordinator too"                   "$w" "$(file_op "$badpool/README.md")"
 
 # claim-integrator.sh and the SessionStart hook for the new roles -------------------------------
@@ -287,16 +287,16 @@ claim_in() {  # claim_in <dir> <pane> [env...]: exit code of claim-integrator.sh
 agents - w1:p1 idle "$proj"  - w2:p1 idle "$wt1"
 : > "$FAKE_LOG"; claim_in "$proj" w1:p1 CLAUDE_ROLE=coordinator; status=$?
 check "claim: coordinator takes coordinator_name" [ "$status:$(cat "$FAKE_LOG")" == "0:rename w1:p1 coordinator-proj" ]
-: > "$FAKE_LOG"; claim_in "$wt1" w2:p1 CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1; status=$?
+: > "$FAKE_LOG"; claim_in "$wt1" w2:p1 CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=integrator-proj-1; status=$?
 check "claim: pool member takes its name" [ "$status:$(cat "$FAKE_LOG")" == "0:rename w2:p1 integrator-proj-1" ]
-claim_in "$wt1" w2:p1 CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-9; status=$?
+claim_in "$wt1" w2:p1 CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=integrator-proj-9; status=$?
 check "claim: a name outside the pool is refused" [ "$status" == 1 ]
 claim_in "$proj" w1:p1 CLAUDE_ROLE=integrator; status=$?
 check "claim: pool mode has no single integrator" [ "$status" == 1 ]
 claim_in "$single" w1:p1 CLAUDE_ROLE=coordinator; status=$?
 check "claim: no coordinator in single mode" [ "$status" == 1 ]
 agents coordinator-proj w1:p1 idle "$proj"  integrator-proj-1 w2:p1 idle "$wt1"
-claim_in "$wt1" w2:p1 CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1; status=$?
+claim_in "$wt1" w2:p1 CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=integrator-proj-1; status=$?
 check "claim: already named pool member" [ "$status" == 0 ]
 
 ssi="$hooks/session-start-integrator.sh"
@@ -307,7 +307,7 @@ ss() {  # ss <cwd> [env...]: the hook's additionalContext
         <<<"$(jq -nc --arg d "$dir" '{cwd: $d, hook_event_name: "SessionStart", source: "startup"}')" \
         | jq -r '.hookSpecificOutput.additionalContext // empty'
 }
-out=$(ss "$wt1" CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=integrator-proj-1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1)
+out=$(ss "$wt1" CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=integrator-proj-1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1)
 check "session-start: pool member in its verify worktree" bash -c '[[ "$1" == *"herdr agent integrator-proj-1"*"integrator pool"* ]]' _ "$out"
 out=$(ss "$proj" CLAUDE_ROLE=coordinator FAKE_PANE=w1:p1 HERDR_PANE_ID=w1:p1)
 check "session-start: coordinator in the main worktree" bash -c '[[ "$1" == *"herdr agent coordinator-proj (the coordinator)"* ]]' _ "$out"
@@ -330,7 +330,7 @@ check "agents-in-repo: --main-worktree" [ "$(air --main-worktree)" == "coordinat
 # integrator-psr-i in pane wi:p9; the coordinator is coordinator-psr in pane wc:p9.
 psr="$work/psr"; git init --quiet -b main "$psr"; mkdir -p "$psr/.claude"
 cp "$root/template/.claude/settings.json" "$psr/.claude/settings.json"
-echo '{"integrators": {"max": 8}}' > "$psr/.claude/multi-agent-herdr.json"
+echo '{"integrators": {"max": 8}}' > "$psr/.claude/herdr-agent-pool.json"
 git -C "$psr" add -A && git -C "$psr" commit --quiet -m init
 git -C "$psr" remote add origin "$origin" && git -C "$psr" fetch --quiet origin
 mem() { echo "integrator-psr-$1"; }
@@ -358,13 +358,13 @@ out=$(as_m "$other" claim 42 --owner "$(mem "$other")" 2>&1); status=$?
 check "pool-state: a dead owner's claim is re-claimed" bash -c '[[ $1 == 0 && "$2" == *"re-claimed from"* ]]' _ "$status" "$out"
 third=$(( other % 8 + 1 )); members "$other" "$third"
 check "pool-state: a live owner's claim holds" exits 3 as_m "$third" claim 42 --owner "$(mem "$third")"
-owner_file="$(git -C "$psr" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-42/owner.json"
+owner_file="$(git -C "$psr" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims/pr-42/owner.json"
 jq '.heartbeat = 0' "$owner_file" > "$owner_file.new" && mv "$owner_file.new" "$owner_file"
 check "pool-state: an expired heartbeat is re-claimed" as_m "$third" claim 42 --owner "$(mem "$third")"
 check "pool-state: release by its owner"   as_m "$third" release 42 --owner "$(mem "$third")"
 check "pool-state: release of an unclaimed PR" as_m "$third" release 42 --owner "$(mem "$third")"
 check "pool-state: no .stale-pr-* left behind" \
-    bash -c '! ls -A "$1" | grep -q "^\.stale-"' _ "$(git -C "$psr" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims"
+    bash -c '! ls -A "$1" | grep -q "^\.stale-"' _ "$(git -C "$psr" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims"
 # Who may call (pool mode): a member, as itself, inside herdr.
 check "pool-state: refused outside herdr (exit 4)"     exits 4 psq claim 50 --owner "$(mem 1)"
 agents foo w0:p9 idle "$psr"  "$(mem 1)" w1:p9 idle "$psr"
@@ -388,19 +388,19 @@ kill "$stranger" 2>/dev/null; wait "$stranger" 2>/dev/null
 as_m 1 claim 43 --owner "$(mem 1)" >/dev/null
 members 2   # member 1 is missing from this listing
 check "pool-state: an owner missing once keeps its claim (grace)" \
-    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
+    exits 3 env HERDR_AGENT_POOL_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
 members 1 2   # back: the mark is cleared
 psq claims >/dev/null
 sleep 1.2; members 2   # missing again, more than the grace after the first glitch
 check "pool-state: a second glitch after a reappearance starts a new grace" \
-    exits 3 env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
+    exits 3 env HERDR_AGENT_POOL_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3"' _ "$psr" "$ps" "$(mem 2)"
 sleep 1.2
 check "pool-state: an owner missing past the grace loses it" \
-    env MULTI_AGENT_HERDR_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3" >/dev/null' _ "$psr" "$ps" "$(mem 2)"
+    env HERDR_AGENT_POOL_MISSING_GRACE=1 bash -c 'cd "$1" && HERDR_ENV=1 FAKE_PANE=w2:p9 HERDR_PANE_ID=w2:p9 "$2" claim 43 --owner "$3" >/dev/null' _ "$psr" "$ps" "$(mem 2)"
 # Eight members race for one stale claim: exactly one takes it (claims/.lock).
 members 1 2 3 4 5 6 7 8
 as_m 1 claim 44 --owner "$(mem 1)" >/dev/null
-f44="$(git -C "$psr" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-44/owner.json"
+f44="$(git -C "$psr" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims/pr-44/owner.json"
 jq '.heartbeat = 0' "$f44" > "$f44.new" && mv "$f44.new" "$f44"
 for i in 2 3 4 5 6 7 8 1; do
     ( as_m "$i" claim 44 --owner "$(mem "$i")" >/dev/null 2>&1; echo $? > "$work/stale-race.$i" ) &
@@ -486,7 +486,7 @@ integrate() {  # integrate <N> [args...]: claim as $me and run integrate-pr.sh; 
     local n="$1"; shift
     (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ps" claim "$n" --owner "$me" >/dev/null)
     export CHECK_COUNT="$work/count-$n"; : > "$CHECK_COUNT"
-    out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 \
+    out=$(cd "$wt1" && env CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 \
         "$ipr" "$n" "$@" 2>&1); rc=$?
     unset CHECK_COUNT CHECK_HOOK
 }
@@ -508,7 +508,7 @@ integrate 2
 check "integrate-pr: a failed verification bounces (exit 4)" bash -c '[[ $1 == 4 && "$2" == *"fail.txt is present"* && "$2" == *"RESULT verify-failed"* ]]' _ "$rc" "$out"
 check "integrate-pr: the worktree is clean after a bounce" clean_wt
 check "integrate-pr: nothing landed"                       not on_main fail.txt
-check "integrate-pr: the bounce is recorded"              [ "$(jq -r .head "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/bounced/pr-2.json")" == "$(git -C "$origin" rev-parse refs/heads/feat/fail)" ]
+check "integrate-pr: the bounce is recorded"              [ "$(jq -r .head "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/bounced/pr-2.json")" == "$(git -C "$origin" rev-parse refs/heads/feat/fail)" ]
 
 make_pr 3 feat/conflict src/a.txt "from the PR"
 push_main src/a.txt "from main"
@@ -571,7 +571,7 @@ check "integrate-pr: a second run in the same worktree is refused (exit 2)" \
     bash -c '[[ $(cat "$1/second.rc") == 2 ]] && grep -q "another integrate-pr.sh is running" "$1/second.out"' _ "$work"
 check "integrate-pr: the first run still merges" bash -c '[[ $1 == 0 ]]' _ "$rc"
 check "integrate-pr: the first run's PR is on main" on_main src/eight.txt
-wt_lock="$(git -C "$wt1" rev-parse --absolute-git-dir)/multi-agent-herdr-integrate.lock"
+wt_lock="$(git -C "$wt1" rev-parse --absolute-git-dir)/herdr-agent-pool-integrate.lock"
 python3 -c 'import fcntl, sys, time
 f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); f.seek(0); f.truncate(); f.write("999999 PR #0\n"); f.flush(); time.sleep(60)' "$wt_lock" &
 leftover=$!; for _ in $(seq 1 100); do grep -q 999999 "$wt_lock" 2>/dev/null && break; sleep 0.1; done
@@ -581,7 +581,7 @@ check "integrate-pr: a lock held by a dead run's leftover is taken over" \
     bash -c '[[ $1 == 0 && "$2" == *"taking over"* ]]' _ "$rc" "$out"
 
 # Number reservations (pool-state.py reserve, project setting numbered_files) --------------------
-cfg_json="$proj/.claude/multi-agent-herdr.json"; cfg_saved=$(cat "$cfg_json")
+cfg_json="$proj/.claude/herdr-agent-pool.json"; cfg_saved=$(cat "$cfg_json")
 cat > "$cfg_json" <<'JSON'
 {"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2}, "numbered_files": {"adr": "docs/decisions/(\\d{4})-.*\\.md"}}
 JSON
@@ -668,13 +668,13 @@ check "base-red: the coordinator assigns one owner" bash -c '[[ "$1" == *"fix as
 check "base-red: clear --if-branch of another branch clears nothing (exit 3)" \
     exits 3 as_me base-red clear --owner "$me" --reason x --if-branch feat/other
 make_pr 24 feat/red24 fail.txt red
-printf '#!/usr/bin/env bash\necho "${MULTI_AGENT_HERDR_BASE_RED_TESTS:-}" > "%s/red-env"\n' "$work" > "$work/hook-red.sh"
+printf '#!/usr/bin/env bash\necho "${HERDR_AGENT_POOL_BASE_RED_TESTS:-}" > "%s/red-env"\n' "$work" > "$work/hook-red.sh"
 chmod +x "$work/hook-red.sh"; export CHECK_HOOK="$work/hook-red.sh"
 integrate 24
 head24=$(git -C "$origin" rev-parse refs/heads/feat/red24)
 check "integrate-pr: a failure while the base is red is exit 14, not a bounce" \
     bash -c '[[ $1 == 14 && "$2" == *"BASE main IS RED"* && "$2" == *"RESULT base-red"* && ! -e "$3/bounced/pr-24.json" ]]' \
-    _ "$rc" "$out" "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr"
+    _ "$rc" "$out" "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool"
 check "integrate-pr: the claim is kept after exit 14" bash -c '[[ "$1" == *"24	$2"* ]]' _ "$(cd "$proj" && "$ps" claims)" "$me"
 check "verify-merge: check.sh gets the red tests" [ "$(cat "$work/red-env")" == "tests/test_a.py::t1 tests/test_b.py::t2" ]
 jq -n --arg h "$head24" '[{number: 24, title: "PR 24", headRefName: "feat/red24", headRefOid: $h, isDraft: false, createdAt: "2026-01-01T00:00:00Z"}]' > "$FAKE_GH/list.json"
@@ -690,25 +690,25 @@ check "hold: refused while the base is green (exit 1)" exits 1 as_me hold 24 --h
 echo '[]' > "$FAKE_GH/list.json"; agents "$me" w2:p1 idle "$wt1"
 
 make_pr 10 feat/ten src/ten.txt ten
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a PR it did not claim (exit 2)" bash -c '[[ $1 == 2 && "$2" == *"not claimed"* ]]' _ "$rc" "$out"
-out=$(cd "$proj" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$proj" && env CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses the main worktree in pool mode (exit 2)" [ "$rc" == 2 ]
 out=$(cd "$wt1" && env CLAUDE_ROLE=coordinator "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses the coordinator (exit 1)" [ "$rc" == 1 ]
 (cd "$proj" && HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ps" claim 10 --owner "$me" >/dev/null)
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME="$me" HERDR_ENV=1 FAKE_PANE=w9:p9 HERDR_PANE_ID=w9:p9 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME="$me" HERDR_ENV=1 FAKE_PANE=w9:p9 HERDR_PANE_ID=w9:p9 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses a pane whose herdr agent is not \$me (exit 2)" \
     bash -c '[[ $1 == 2 && "$2" == *"herdr agent is"* ]]' _ "$rc" "$out"
 agents "$me" w2:p1 idle "$wt1"  foo w8:p1 idle "$wt1"
-out=$(cd "$wt1" && env CLAUDE_ROLE=integrator MULTI_AGENT_HERDR_NAME=foo HERDR_ENV=1 FAKE_PANE=w8:p1 HERDR_PANE_ID=w8:p1 "$ipr" 10 2>&1); rc=$?
+out=$(cd "$wt1" && env CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=foo HERDR_ENV=1 FAKE_PANE=w8:p1 HERDR_PANE_ID=w8:p1 "$ipr" 10 2>&1); rc=$?
 check "integrate-pr: refuses an agent outside the pool, even named in the env (exit 2)" \
     bash -c '[[ $1 == 2 && "$2" == *"not a member of the integrator pool"* ]]' _ "$rc" "$out"
 agents "$me" w2:p1 idle "$wt1"
 # The claim changes hands while the PR is verified: nothing is pushed.
 cat > "$work/hook-steal.sh" <<HOOK
 #!/usr/bin/env bash
-f="\$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10/owner.json"
+f="\$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims/pr-10/owner.json"
 jq '.owner = "integrator-proj-2"' "\$f" > "\$f.new" && mv "\$f.new" "\$f"
 HOOK
 chmod +x "$work/hook-steal.sh"; export CHECK_HOOK="$work/hook-steal.sh"
@@ -718,7 +718,7 @@ check "integrate-pr: a claim lost during the verification stops the push (exit 1
     bash -c '[[ $1 == 10 && "$2" == *"claim-lost"* && "$(git -C "$3" rev-parse main)" == "$4" ]]' _ "$rc" "$out" "$origin" "$before"
 check "integrate-pr: a lost claim stays with its new owner" \
     [ "$(cd "$proj" && "$ps" claims | awk -F'\t' '$1 == 10 { print $2 }')" == integrator-proj-2 ]
-rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10"   # the test's own takeover
+rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims/pr-10"   # the test's own takeover
 # herdr stops confirming the pane's agent while the PR is verified: nothing is pushed (exit 11).
 cat > "$work/hook-identity.sh" <<HOOK
 #!/usr/bin/env bash
@@ -726,13 +726,13 @@ jq '.result.agents |= map(if .pane_id == "w2:p1" then .name = "intruder" else . 
 mv "$FAKE_AGENTS.new" "$FAKE_AGENTS"
 HOOK
 chmod +x "$work/hook-identity.sh"; export CHECK_HOOK="$work/hook-identity.sh"
-rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10"
+rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims/pr-10"
 before=$(git -C "$origin" rev-parse main)
 integrate 10
 check "integrate-pr: identity lost under the lock stops the push (exit 11)" \
     bash -c '[[ $1 == 11 && "$2" == *"identity-refused"* && "$(git -C "$3" rev-parse main)" == "$4" ]]' _ "$rc" "$out" "$origin" "$before"
 agents "$me" w2:p1 idle "$wt1"
-rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr/claims/pr-10"
+rm -rf "$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool/claims/pr-10"
 # Code renamed into an exempt path on main: --no-renames sees the source change, so re-verify.
 make_pr 11 feat/eleven src/eleven.txt eleven
 cat > "$work/hook-rename.sh" <<HOOK
@@ -790,22 +790,22 @@ check "resource-board: lists idle and done agents as candidates to close" \
     bash -c '[[ "$1" == *"- a2 - idle"* && "$1" == *"- a3 - done"* && "$1" != *"- a1 - working"* ]]' _ "$sheet"
 "$board" prune >/dev/null
 check "resource-board: prune drops gone agents, keeps live ones and humans' lines" \
-    bash -c '[[ ! -e "$1/board/ghost.json" && -e "$1/board/a1.json" && -e "$1/board/me-shell.json" ]]' _ "$MULTI_AGENT_HERDR_RESOURCES_DIR"
+    bash -c '[[ ! -e "$1/board/ghost.json" && -e "$1/board/a1.json" && -e "$1/board/me-shell.json" ]]' _ "$HERDR_AGENT_POOL_RESOURCES_DIR"
 "$board" clear --as a1 >/dev/null
-check "resource-board: clear removes your own line" not test -e "$MULTI_AGENT_HERDR_RESOURCES_DIR/board/a1.json"
+check "resource-board: clear removes your own line" not test -e "$HERDR_AGENT_POOL_RESOURCES_DIR/board/a1.json"
 check "resource-board: refuses a name that is not a file name" exits 1 "$board" note x --as "../etc"
 check "resource-board: refuses a non-numeric estimate" exits 1 "$board" note x --gb lots --as a2
 budget 4
 check "resource-board: within the guideline, no flag" bash -c '[[ "$("$1" show)" != *"over the guideline"* ]]' _ "$board"
-echo '{"heavy_slots": 0}' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
+echo '{"heavy_slots": 0}' > "$HERDR_AGENT_POOL_RESOURCES_CONFIG"
 check "resource-budget: rejects an invalid limit" exits 1 "$rb" limits
-echo '{"heavy_slot": 2}' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"
+echo '{"heavy_slot": 2}' > "$HERDR_AGENT_POOL_RESOURCES_CONFIG"
 check "resource-budget: rejects an unknown key" exits 1 "$rb" limits
 
 # The queue: limits re-read on every retry, priority order, lowered limits, interruptions.
-slots() { printf '{"heavy_slots": %s, "light_slots": 1, "sessions_guideline": 50, "low_memory_gb": 0}\n' "$1" > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"; }
+slots() { printf '{"heavy_slots": %s, "light_slots": 1, "sessions_guideline": 50, "low_memory_gb": 0}\n' "$1" > "$HERDR_AGENT_POOL_RESOURCES_CONFIG"; }
 until_true() { for _ in $(seq 1 100); do "$@" && return 0; sleep 0.1; done; return 1; }
-queued() { [[ $(ls "$MULTI_AGENT_HERDR_RESOURCES_DIR/queue-heavy" 2>/dev/null | wc -l) -ge $1 ]]; }
+queued() { [[ $(ls "$HERDR_AGENT_POOL_RESOURCES_DIR/queue-heavy" 2>/dev/null | wc -l) -ge $1 ]]; }
 held() { "$rb" status --json | jq -e --argjson n "$1" '.heavy.holders | length == $n' >/dev/null; }
 release_file="$work/release"; rm -f "$release_file"
 hold() { "$rb" run --label "$1" -- sh -c "until [ -e '$release_file.$1' ]; do sleep 0.1; done" 2>/dev/null & }
@@ -839,10 +839,10 @@ check "resource-board: flags a holder above the lowered limit" \
     bash -c '[[ "$("$1" show)" == *"slot 1: h4"*"above the current limit"* ]]' _ "$board"
 check "resource-budget: the light pool does not wait behind heavy holders" "$rb" run --pool light --timeout 2 -- true
 check "resource-budget: the command learns the pool's limit" \
-    bash -c '[[ "$("$1" run --pool light -- sh -c "echo \$MULTI_AGENT_HERDR_SLOT_COUNT")" == 1 ]]' _ "$rb"
+    bash -c '[[ "$("$1" run --pool light -- sh -c "echo \$HERDR_AGENT_POOL_SLOT_COUNT")" == 1 ]]' _ "$rb"
 "$rb" run --label w2 -- true 2>/dev/null & waiter=$!
 until_true queued 1
-echo '{"heavy_slots": ' > "$MULTI_AGENT_HERDR_RESOURCES_CONFIG"   # half written
+echo '{"heavy_slots": ' > "$HERDR_AGENT_POOL_RESOURCES_CONFIG"   # half written
 sleep 2.5
 check "resource-budget: a half-written limits file keeps the waiter waiting" kill -0 "$waiter"
 kill -TERM "$waiter"; wait "$waiter"; rc=$?
@@ -857,7 +857,7 @@ cat > "$vm/scripts/check.sh" <<'SH'
 echo "scope=${SCOPE:-} docs=${DOCS:-}" > "$VM_OUT"
 SH
 chmod +x "$vm/scripts/check.sh"
-echo '{"verify": {"check_env": {"SCOPE": "fast"}, "docs_only_paths": ["docs/*"], "docs_only_env": {"DOCS": "1"}}}' > "$vm/.claude/multi-agent-herdr.json"
+echo '{"verify": {"check_env": {"SCOPE": "fast"}, "docs_only_paths": ["docs/*"], "docs_only_env": {"DOCS": "1"}}}' > "$vm/.claude/herdr-agent-pool.json"
 echo a > "$vm/docs/a.md"; echo a > "$vm/src/a.py"
 git -C "$vm" add -A && git -C "$vm" commit --quiet -m init
 vmrun() { (cd "$vm" && env VM_OUT="$work/vm-out" "$scripts/verify-merge.sh" >/dev/null 2>&1); }
@@ -869,15 +869,15 @@ vmrun
 check "verify-merge: only check_env when code changed too" [ "$(cat "$work/vm-out")" == "scope=fast docs=" ]
 (cd "$vm" && env VM_OUT="$work/vm-out" SCOPE=full "$scripts/verify-merge.sh" >/dev/null 2>&1)
 check "verify-merge: a variable the caller exported wins over check_env" [ "$(cat "$work/vm-out")" == "scope=full docs=" ]
-echo '{"verify": {"check_env": {"CLAUDE_ROLE": "integrator"}}}' > "$vm/.claude/multi-agent-herdr.json"
+echo '{"verify": {"check_env": {"CLAUDE_ROLE": "integrator"}}}' > "$vm/.claude/herdr-agent-pool.json"
 check "project-config: refuses an identity variable in verify.check_env" exits 1 "$scripts/project-config.py" --root "$vm"
-echo '{"verify": {"check_env": {"SCOPE": 1}}}' > "$vm/.claude/multi-agent-herdr.json"
+echo '{"verify": {"check_env": {"SCOPE": 1}}}' > "$vm/.claude/herdr-agent-pool.json"
 check "project-config: refuses a non-string check variable" exits 1 "$scripts/project-config.py" --root "$vm"
-echo '{}' > "$vm/.claude/multi-agent-herdr.json"
+echo '{}' > "$vm/.claude/herdr-agent-pool.json"
 hold h5; until_true held 1
 (cd "$vm" && env VM_OUT="$work/vm-out" "$scripts/verify-merge.sh" >/dev/null 2>&1) & vmpid=$!
 until_true queued 1
-kill -TERM "$(jq -r .pid "$MULTI_AGENT_HERDR_RESOURCES_DIR"/queue-heavy/*.json)"; wait "$vmpid"; rc=$?
+kill -TERM "$(jq -r .pid "$HERDR_AGENT_POOL_RESOURCES_DIR"/queue-heavy/*.json)"; wait "$vmpid"; rc=$?
 check "verify-merge: exit 120 when its wait for a slot is interrupted" [ "$rc" == 120 ]
 touch "$release_file.h5"; wait; rm -f "$release_file".*
 budget 50
@@ -903,7 +903,7 @@ agents integrator-single w1:p1 idle "$single"
 check "pool route: single mode routes to integrator_name" [ "$(cd "$single" && "$pool" route | cut -f1)" == integrator-single ]
 
 # integrator-pool.sh nudge / watch: idle members hear about PRs that wait unclaimed -------------
-st="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr"
+st="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool"
 jq -n '[{number: 31, title: "PR 31", headRefName: "feat/x31", headRefOid: "abc", isDraft: false, createdAt: "2026-01-01T00:00:00Z"}]' \
     > "$FAKE_GH/list.json"
 agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 idle "$wt2"
@@ -944,13 +944,13 @@ check "pool scale: facts and a suggestion, nothing changed" \
 check "pool spawn: refused to a Claude session that is not the coordinator" [ "$status" == 1 ]
 git -C "$proj" worktree remove "$wt2"
 : > "$FAKE_LOG"
-out=$(cd "$proj" && env CLAUDECODE=1 CLAUDE_ROLE=coordinator HERDR_ENV=1 MULTI_AGENT_HERDR_NAME=coordinator-proj "$pool" spawn 2 2>&1); status=$?
+out=$(cd "$proj" && env CLAUDECODE=1 CLAUDE_ROLE=coordinator HERDR_ENV=1 HERDR_AGENT_POOL_NAME=coordinator-proj "$pool" spawn 2 2>&1); status=$?
 log=$(cat "$FAKE_LOG")
 check "pool spawn: exit 0"                                  [ "$status" == 0 ]
 check "pool spawn: a detached verify worktree at origin/main" \
     bash -c '! git -C "$1" symbolic-ref -q HEAD && [[ "$(git -C "$1" rev-parse HEAD)" == "$(git -C "$2" rev-parse main)" ]]' _ "$wt2" "$origin"
 check "pool spawn: its own workspace with the role in its env" \
-    bash -c '[[ "$1" == *"workspace-create --cwd $2 --label integrator-proj-2"*"CLAUDE_ROLE=integrator"*"MULTI_AGENT_HERDR_NAME=integrator-proj-2"* ]]' _ "$log" "$wt2"
+    bash -c '[[ "$1" == *"workspace-create --cwd $2 --label integrator-proj-2"*"CLAUDE_ROLE=integrator"*"HERDR_AGENT_POOL_NAME=integrator-proj-2"* ]]' _ "$log" "$wt2"
 check "pool spawn: agent started with its name and the integrator prompt" \
     bash -c '[[ "$1" == *"agent-start integrator-proj-2 --kind claude --pane w9:p1 -- --name integrator-proj-2 --append-system-prompt-file"*"prompts/integrator.md"* ]]' _ "$log"
 check "pool spawn: the kickoff carries the header" \
@@ -1026,7 +1026,7 @@ check "cleanup: closes the workspace, removes the worktree and both branches" \
     bash -c '[[ $1 == 0 && "$(cat "$2")" == "workspace-close w7" && ! -d "$3" ]] \
              && ! git -C "$4" rev-parse -q --verify refs/heads/feat/done >/dev/null \
              && ! git -C "$5" rev-parse -q --verify refs/heads/feat/done >/dev/null' _ "$status" "$FAKE_LOG" "$done_wt" "$proj" "$origin"
-check "cleanup: clears the agent's resource-board note" not test -e "$MULTI_AGENT_HERDR_RESOURCES_DIR/board/donea.json"
+check "cleanup: clears the agent's resource-board note" not test -e "$HERDR_AGENT_POOL_RESOURCES_DIR/board/donea.json"
 check "cleanup: refuses a branch without a merged PR, even one with no commits yet (exit 3)" exits 3 cwi feat/dev1
 # A branch name reused after its PR merged: the merged PR's head is not this tip.
 jq '.[0].headRefName = "feat/dev2" | .[0].headRefOid = "0000000000000000000000000000000000000000"' "$FAKE_GH/list.json" > "$FAKE_GH/list.new" \

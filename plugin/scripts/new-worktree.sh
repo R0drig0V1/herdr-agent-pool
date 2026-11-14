@@ -3,14 +3,14 @@
 #
 # Usage: new-worktree.sh <type>/<short-kebab-name>   e.g. feat/user-login
 #
-# Part of the multi-agent-herdr plugin (ported from multi-agent 0.1.0). The integrator's
-# /multi-agent-herdr:dispatch skill runs it from the main worktree, then opens the new worktree
+# Part of the herdr-agent-pool plugin (ported from multi-agent 0.1.0). The integrator's
+# /herdr-agent-pool:dispatch skill runs it from the main worktree, then opens the new worktree
 # as its own herdr workspace. It works on the repository of the current directory.
 #
 # - Creates ../<worktree_prefix><short-kebab-name> (default prefix: "<repo>-") on a new branch
 #   <type>/<short-kebab-name>, from origin/<base_branch> when it exists (the integrator pushes
 #   the base branch there), else the local base branch. base_branch defaults to main; both
-#   settings come from .claude/multi-agent-herdr.json (project-config.py), and an invalid file
+#   settings come from .claude/herdr-agent-pool.json (project-config.py), and an invalid file
 #   stops the script before anything is created.
 # - Copies the main checkout's .env, if there is one (it is not tracked by git).
 # - Runs scripts/worktree-setup.sh inside the new worktree when the project has one: the
@@ -51,4 +51,4 @@ fi
 
 echo
 echo "worktree ready: $worktree  (branch $branch, from $base)"
-echo "next: open it as its own herdr workspace (/multi-agent-herdr:dispatch does)"
+echo "next: open it as its own herdr workspace (/herdr-agent-pool:dispatch does)"

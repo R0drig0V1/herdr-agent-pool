@@ -1,5 +1,5 @@
 <!--
-Design of pool mode in multi-agent-herdr: a coordinator plus N parallel integrators. Roles,
+Design of pool mode in herdr-agent-pool: a coordinator plus N parallel integrators. Roles,
 message flows, the PR claim and merge lock protocols, failure modes, the scaling policy,
 parallel verification, the machine-wide resource budget and the open policy questions.
 -->
@@ -22,10 +22,10 @@ exactly the single-integrator behaviour (same names, hooks and skills).
 | Role | Session | Worktree | Owns | Never |
 |------|---------|----------|------|-------|
 | **Coordinator** | `scripts/coordinator.sh`, `CLAUDE_ROLE=coordinator`, herdr name `coordinator_name` (default `coordinator-<repo>`) | the main worktree | the user's attention, `dispatch`, `docs/phases/`, the pool's size | merges, reviews a PR's verdict away |
-| **Integrator** (N of them) | spawned by `integrator-pool.sh spawn <n>`, `CLAUDE_ROLE=integrator`, `MULTI_AGENT_HERDR_NAME=<integrator_name>-<n>` | its own verify worktree `../<worktree_prefix>integrator-<n>`, detached at `origin/<base>` | the PRs it claimed: review, verification, merge, verdict | touches the main worktree or `docs/phases/`, pushes `<base>` outside the merge lock |
+| **Integrator** (N of them) | spawned by `integrator-pool.sh spawn <n>`, `CLAUDE_ROLE=integrator`, `HERDR_AGENT_POOL_NAME=<integrator_name>-<n>` | its own verify worktree `../<worktree_prefix>integrator-<n>`, detached at `origin/<base>` | the PRs it claimed: review, verification, merge, verdict | touches the main worktree or `docs/phases/`, pushes `<base>` outside the merge lock |
 | **Development agent** | started by `dispatch` | `../<worktree_prefix><name>` on its branch | its branch and PR | merges, pushes a protected branch, prompts anyone but the coordinator and the pool |
 
-Settings (`.claude/multi-agent-herdr.json`, read only by `project-config.py`):
+Settings (`.claude/herdr-agent-pool.json`, read only by `project-config.py`):
 
 ```json
 {
@@ -59,7 +59,7 @@ check), and `docs_only_env` is added on top when every path the merge changes ma
 `docs_only_paths` (a docs-only lane; off while that list is empty). A variable the caller
 already exported wins over both (export `PROJECT_CHECK_SCOPE=full` before `integrate-pr.sh`
 for a full-scope merge verification). Identity variables
-(`CLAUDE_*`, `HERDR_*`, `MULTI_AGENT_HERDR_*`) are refused. `project-config.py` derives `mode` (`single`/`pool`) and `integrator_pool`
+(`CLAUDE_*`, `HERDR_*`, `HERDR_AGENT_POOL_*`) are refused. `project-config.py` derives `mode` (`single`/`pool`) and `integrator_pool`
 (`<integrator_name>-1` .. `-max`, each cut to herdr's 32 characters).
 
 ## Message flows
@@ -117,7 +117,7 @@ and a lost announcement only delays a PR until the next member looks.
 
 ## PR claims
 
-State lives in the repository's git common dir, `<common>/multi-agent-herdr/`: every
+State lives in the repository's git common dir, `<common>/herdr-agent-pool/`: every
 integrator runs on the same machine (herdr is local), so a directory there is shared by all
 of them and by nobody else.
 
@@ -127,7 +127,7 @@ of them and by nobody else.
 - **Heartbeat**: `integrate-pr.sh` refreshes it at the start and every 2 minutes during a
   verification.
 - **Stale** = the heartbeat is older than `claim_ttl_minutes`, or the owner has been missing
-  from `herdr agent list` for a grace period (`$MULTI_AGENT_HERDR_MISSING_GRACE`, 180 s by
+  from `herdr agent list` for a grace period (`$HERDR_AGENT_POOL_MISSING_GRACE`, 180 s by
   default). The first listing that misses the owner only records `missing_since`, so one
   glitchy listing cannot hand a live claim over. When herdr cannot be asked, only the age
   counts. A claim directory without `owner.json` is "being created" for 60 s, then stale.
@@ -268,7 +268,7 @@ their own branch: wasted fixes and conflicting PRs. The pool turns that into **o
    since <time>: <tests>; suspect PR #<S>; fix assigned to <owner>. Do NOT fix it in your
    branch: rebase after the fix lands.` The `commit` and `pr` skills show it and do not stop on
    those tests; `verify-merge.sh` prints it and hands the tests to `scripts/check.sh` as
-   `$MULTI_AGENT_HERDR_BASE_RED_TESTS` (space-separated; a project may leave them out, which is
+   `$HERDR_AGENT_POOL_BASE_RED_TESTS` (space-separated; a project may leave them out, which is
    the explicit exemption). While the base is red, a failed merge verification is
    `integrate-pr.sh` exit 14 instead of a bounce, with the claim kept: when only the red tests
    failed the integrator runs `pool-state.py hold <N> --head <sha>` (the claim is released, a
@@ -302,10 +302,10 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
 | `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
 | `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>` | blocked | blocked | allowed | allowed |
-| Setting `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`, `MULTI_AGENT_HERDR_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
+| Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
-| Anything above, while `.claude/multi-agent-herdr.json` is invalid | blocked | blocked | blocked | blocked (fail closed; the file itself may be edited) |
+| Anything above, while `.claude/herdr-agent-pool.json` is invalid | blocked | blocked | blocked | blocked (fail closed; the file itself may be edited) |
 
 \* Allowed by the guard because these roles start and message agents; the rule "never answer
 another agent's dialog" stays a rule of their skills and prompts.
@@ -355,7 +355,7 @@ agent's own is not inspected.
 | An integrator resumes after an outage, sleep or a long dialog | its picture of the PRs, claims and base is old (one tried to merge a PR merged 7 h earlier) | the `integrate` skill refreshes claims, open PRs and the base before acting |
 | A PR needs a decision the integrator cannot make | before, it waited at a dialog (6 h one night: half the pool) | it looks for a recorded decision (`docs/phases/`, `docs/decisions/`, `CLAUDE.md`); without one it comments the question, bounces the head, tells the coordinator and takes the next PR |
 | The push under the merge lock hangs | killed after 600 s (`lock run --max-seconds`) | the claim is released and the PR goes back to the queue (exit 6) |
-| `.claude/multi-agent-herdr.json` becomes invalid | every role loses its rights (fail closed) | fix the file (the Edit guard allows that one file); `project-config.py` names the error |
+| `.claude/herdr-agent-pool.json` becomes invalid | every role loses its rights (fail closed) | fix the file (the Edit guard allows that one file); `project-config.py` names the error |
 | The machine runs out of memory | every agent loses its turn | prevented by the resource budget below |
 
 ## Scaling
@@ -435,8 +435,8 @@ commands run at once on the machine, across every agent and project.
   for a heavy slot.)
 - It stays code because a conversation cannot stop a process that is already allocating
   memory. When memory is scarce, agents answer late or not at all.
-- Slots are `flock`ed files in `~/.cache/multi-agent-herdr/resources/`, so a crashed holder
-  frees its slot. A nested call (`$MULTI_AGENT_HERDR_SLOT` set) runs at once instead of
+- Slots are `flock`ed files in `~/.cache/herdr-agent-pool/resources/`, so a crashed holder
+  frees its slot. A nested call (`$HERDR_AGENT_POOL_SLOT` set) runs at once instead of
   deadlocking.
 - Waiters **queue**. Each one writes a ticket; a free slot goes to the first ticket in
   priority order, oldest first within a priority: `merge` (an integrator's
@@ -449,7 +449,7 @@ commands run at once on the machine, across every agent and project.
   it admits nobody new until the holders above the new limit finish (they are never killed,
   and the board lists them). A limits file that is half written when a waiter reads it keeps
   the waiter's last good limit.
-- The command gets `$MULTI_AGENT_HERDR_SLOT_COUNT` (the pool's limit when it was admitted),
+- The command gets `$HERDR_AGENT_POOL_SLOT_COUNT` (the pool's limit when it was admitted),
   so a project can size its parallelism, e.g. test workers = cores / slots: two checks with 4
   workers each load a shared test database like one check with 8.
 - A waiter stopped by a signal (SIGTERM, SIGINT, SIGHUP) exits 120: its command never ran.
@@ -457,7 +457,7 @@ commands run at once on the machine, across every agent and project.
   queue, no bounce). Do not stop waiters to make them see a new limit: they see it anyway.
 - Its limits:
   - it binds only the commands run through it, not a suite an agent starts by hand;
-  - setting `MULTI_AGENT_HERDR_SLOT` would skip it, so the guard blocks that;
+  - setting `HERDR_AGENT_POOL_SLOT` would skip it, so the guard blocks that;
   - when its state directory cannot be created it warns and runs the command anyway, so the
     floor never makes a verification fail;
   - an invalid `resources.json` makes every wrapped command fail. `resource-budget.py
@@ -505,7 +505,7 @@ them decide. Agents never close another agent's workspace, except a pool member 
 memory). That is why the protocol is hub-and-spoke through the coordinator, and why an agent
 asks only for what goes beyond a normal check. The normal check just waits for its slot.
 
-Limits are per machine, in `~/.config/multi-agent-herdr/resources.json`, overriding defaults
+Limits are per machine, in `~/.config/herdr-agent-pool/resources.json`, overriding defaults
 derived from the RAM. `heavy_slots` and `light_slots` (default 2 on every machine) are
 enforced; the other two are guidelines the board shows and the coordinator weighs:
 

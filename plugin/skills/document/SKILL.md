@@ -4,7 +4,7 @@ description: Bring the documentation of this repository up to date with the code
 ---
 
 <!--
-document skill of the multi-agent-herdr plugin. Unchanged from multi-agent 0.1.0's
+document skill of the herdr-agent-pool plugin. Unchanged from multi-agent 0.1.0's
 `document` skill apart from this header.
 -->
 

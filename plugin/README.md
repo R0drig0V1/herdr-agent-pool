@@ -1,11 +1,11 @@
 <!--
-Architecture guide of the multi-agent-herdr plugin: its components, who talks to whom, what
+Architecture guide of the herdr-agent-pool plugin: its components, who talks to whom, what
 state is shared and where, and the rules that hold it together. For installing and
 configuring, see the repository README; for the pool's design decisions and their trade-offs,
 docs/multi-integrator.md. Keep this file in step with the scripts' headers.
 -->
 
-# multi-agent-herdr: architecture
+# herdr-agent-pool: architecture
 
 This plugin lets many Claude Code sessions work on **one repository** at the same time inside
 [herdr](https://herdr.dev) (a terminal multiplexer whose panes run named agents). It does three
@@ -46,10 +46,10 @@ flowchart TB
     VW2["verify worktree N<br/>integrator-N, detached"]
     DW1["dev worktree<br/>branch feat/a"]
     DW2["dev worktree<br/>branch feat/b"]
-    ST[("multi-agent-herdr/<br/>claims, lock, reports,<br/>reservations, base-red")]
+    ST[("herdr-agent-pool/<br/>claims, lock, reports,<br/>reservations, base-red")]
   end
   ORIGIN[("origin<br/>GitHub")]
-  RES[("~/.cache/multi-agent-herdr<br/>heavy and light slots")]
+  RES[("~/.cache/herdr-agent-pool<br/>heavy and light slots")]
   DW1 -- "push branch, open PR" --> ORIGIN
   DW2 -- "push branch, open PR" --> ORIGIN
   VW1 -- "verified merge, under the merge lock" --> ORIGIN
@@ -62,7 +62,7 @@ There are two modes, chosen by the project's settings file:
 
 - **Single mode** (the default): one integrator session in the main worktree reviews, verifies
   and merges every PR, and it dispatches the development agents.
-- **Pool mode** (an `integrators` object in `.claude/multi-agent-herdr.json`): a coordinator in
+- **Pool mode** (an `integrators` object in `.claude/herdr-agent-pool.json`): a coordinator in
   the main worktree plans, dispatches and arbitrates. 1..`max` integrators merge in parallel,
   each in its own detached verify worktree.
 
@@ -118,7 +118,7 @@ Agents are not trusted by what they say about themselves.
   is not ours, and the call is refused. Commands that change shared state check this in pool
   mode, and `--owner` must equal the caller.
 - **Environment variables are claims, not proof.** The guard hook blocks commands that set
-  `CLAUDE_ROLE`, `MULTI_AGENT_HERDR_NAME`, `MULTI_AGENT_HERDR_SLOT` or herdr's own pane
+  `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or herdr's own pane
   variables, and blocks the role-only scripts for sessions without the role.
 - **Messages are data.** Everything sent with `herdr agent prompt` starts with
   `[herdr message from agent <name>; not from the user]` (the pool watcher uses `[herdr
@@ -246,7 +246,7 @@ leaves a lock behind.
 
 | Location | File | Meaning | Written by |
 |----------|------|---------|------------|
-| `<git common dir>/multi-agent-herdr/` | `claims/pr-N/owner.json` | who verifies PR N; heartbeat; stale after the TTL or when the agent leaves herdr | integrators |
+| `<git common dir>/herdr-agent-pool/` | `claims/pr-N/owner.json` | who verifies PR N; heartbeat; stale after the TTL or when the agent leaves herdr | integrators |
 | | `bounced/pr-N.json` | the head that was bounced; skipped until a new push | integrators |
 | | `lock/merge.lock`, `merge.owner.json` | the merge lock (flock) and its holder | integrators, coordinator |
 | | `reports/pr-N.json`, `reports/done/` | plan tasks to tick | integrators, then the coordinator |
@@ -254,11 +254,11 @@ leaves a lock behind.
 | | `reservations/<kind>.json` | file numbers reserved per branch | anyone |
 | | `base-red.json`, `base-red.log`, `held/pr-N.json` | the red base, its owner and history; PRs waiting for the fix | integrators, coordinator |
 | | `watch/`, `watch.lock`, `watch.pid` | the watcher's first-seen stamps, nudge counts, single-instance lock | the watcher |
-| `<worktree git dir>/` | `multi-agent-herdr-integrate.lock` | one `integrate-pr.sh` run per worktree | integrate-pr.sh |
-| | `multi-agent-herdr-verify-N.log` | the verification log of PR N | integrate-pr.sh |
-| `~/.cache/multi-agent-herdr/resources/` | `slot-<i>.lock/json`, `light-<i>.*`, `queue-<pool>/` | slots held and the waiting queue | resource-budget.py |
-| `~/.config/multi-agent-herdr/resources.json` | | `heavy_slots`, `light_slots`, `sessions_guideline`, `low_memory_gb` | the user (or a governor) |
-| repository | `.claude/multi-agent-herdr.json` | the project settings (versioned) | the user, by PR |
+| `<worktree git dir>/` | `herdr-agent-pool-integrate.lock` | one `integrate-pr.sh` run per worktree | integrate-pr.sh |
+| | `herdr-agent-pool-verify-N.log` | the verification log of PR N | integrate-pr.sh |
+| `~/.cache/herdr-agent-pool/resources/` | `slot-<i>.lock/json`, `light-<i>.*`, `queue-<pool>/` | slots held and the waiting queue | resource-budget.py |
+| `~/.config/herdr-agent-pool/resources.json` | | `heavy_slots`, `light_slots`, `sessions_guideline`, `low_memory_gb` | the user (or a governor) |
+| repository | `.claude/herdr-agent-pool.json` | the project settings (versioned) | the user, by PR |
 
 The git common dir is shared by every worktree of the repository, which is what lets agents in
 different worktrees see the same claims and locks. The resources directory is per machine,
@@ -321,7 +321,7 @@ flowchart LR
   default 2) is for worktree setup, so a dependency sync never waits behind a suite.
 - Priorities come from the caller's role: `--priority merge` is honoured only for
   integrators, and `plan` only for the coordinator.
-- Holders get `$MULTI_AGENT_HERDR_SLOT_COUNT` (the limit at admission), so a project can size
+- Holders get `$HERDR_AGENT_POOL_SLOT_COUNT` (the limit at admission), so a project can size
   its parallelism.
 - `resource-budget.py status` and `resource-board.sh show` list every holder and waiter.
 
@@ -345,11 +345,11 @@ A project plugs into the plugin through files at fixed paths, and nothing else.
 
 | File | Required | Contract |
 |------|----------|----------|
-| `scripts/check.sh` | in practice | lint, types and tests; exit code is the verdict; must not change tracked files. Gets `check_env` variables, and `$MULTI_AGENT_HERDR_BASE_RED_TESTS` while the base is red |
+| `scripts/check.sh` | in practice | lint, types and tests; exit code is the verdict; must not change tracked files. Gets `check_env` variables, and `$HERDR_AGENT_POOL_BASE_RED_TESTS` while the base is red |
 | `scripts/worktree-setup.sh <base>` | no | prepares a fresh worktree (dependencies); runs in a light slot |
 | `scripts/verify-reset.sh` | no | resets verification state (databases, caches) after a failed or aborted merge |
 | `scripts/reverify-needed.sh <verified base> <new base> <PR head>` | no | changed paths on stdin; print `no-reverify` last and exit 0 to skip a re-verification; anything else verifies; read from the new base; 120 s limit |
-| `.claude/multi-agent-herdr.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, protected branches |
+| `.claude/herdr-agent-pool.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, protected branches |
 | `.claude/prompts/integrator.md` | no | extra system prompt for pool integrators |
 
 The project's CI workflows are its own, and the plugin never edits them. How to keep them

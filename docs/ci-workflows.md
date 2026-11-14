@@ -13,7 +13,7 @@ GitHub-hosted Linux runners at USD 0.006 per minute. Almost half of it went to j
 than a minute.
 
 These are recommendations for the project's own `.github/workflows/`. The plugin never
-edits them. `/multi-agent-herdr:setup` reviews them against this page and reports what it
+edits them. `/herdr-agent-pool:setup` reviews them against this page and reports what it
 finds.
 
 ## Contents

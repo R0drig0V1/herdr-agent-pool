@@ -1,4 +1,4 @@
-# Files git must not track in claude-code-herdr.
+# Files git must not track in herdr-agent-pool.
 # Claude Code local settings
 .claude/settings.local.json
 .env

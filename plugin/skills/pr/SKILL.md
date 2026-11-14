@@ -4,7 +4,7 @@ description: Open a pull request for the current work on GitHub with a clear sum
 ---
 
 <!--
-pr skill of the multi-agent-herdr plugin. Ported from multi-agent 0.1.0's `pr` skill; step 5
+pr skill of the herdr-agent-pool plugin. Ported from multi-agent 0.1.0's `pr` skill; step 5
 replaces SendMessage with `herdr agent prompt integrator` (this plugin is herdr only). Command
 syntax from `herdr --skill` and `herdr agent|pane` (herdr 0.9.5).
 -->
@@ -17,7 +17,7 @@ syntax from `herdr --skill` and `herdr agent|pane` (herdr 0.9.5).
 "${CLAUDE_PLUGIN_ROOT}/scripts/project-config.py"; echo "exit=$?"
 ```
 
-It prints the project's settings (`.claude/multi-agent-herdr.json`, defaults when absent).
+It prints the project's settings (`.claude/herdr-agent-pool.json`, defaults when absent).
 Below, **`<base>`** is `base_branch` (default `main`): write its value literally into every
 command, because shell variables do not survive from one command to the next. `mode` is
 `single` (one integrator, `integrator_name`) or `pool` (a coordinator, `coordinator_name`,
@@ -27,7 +27,7 @@ the file is invalid: stop and show the user the error.
 ## 1. Branch
 
 - Never open a PR from `<base>` or `main`, and never from the main worktree: a development agent is
-  started by the integrator with `/multi-agent-herdr:dispatch`, already inside a worktree of
+  started by the integrator with `/herdr-agent-pool:dispatch`, already inside a worktree of
   its own (`<type>/<short-kebab-description>`, e.g. `feat/user-login`). See "Multi-agent
   workflow" in CLAUDE.md.
 - Make sure everything intended is committed (use the `commit` skill if not).

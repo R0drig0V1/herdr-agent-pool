@@ -30,7 +30,7 @@
 # 120 means a step was interrupted while it waited for its slot: nothing was checked, which
 # is not a verdict on the merge (integrate-pr.sh requeues the PR without a bounce).
 #
-# Part of the multi-agent-herdr plugin (unchanged from multi-agent 0.1.0); the scripts above belong to the project and are resolved
+# Part of the herdr-agent-pool plugin (unchanged from multi-agent 0.1.0); the scripts above belong to the project and are resolved
 # from the repository of the current directory.
 #
 # Only for the integrator.
@@ -92,12 +92,12 @@ if [[ -x scripts/worktree-setup.sh ]]; then
 fi
 failed_step="checks"; step "$failed_step"
 # A red base (pool-state.py base-red): say so, and hand the known-red tests to check.sh, which
-# may leave them out ($MULTI_AGENT_HERDR_BASE_RED_TESTS, space-separated; the project decides).
+# may leave them out ($HERDR_AGENT_POOL_BASE_RED_TESTS, space-separated; the project decides).
 red=$("$(dirname "$0")/pool-state.py" base-red show 2>/dev/null || true)
 if [[ -n "$red" ]]; then
     echo "$red"
-    MULTI_AGENT_HERDR_BASE_RED_TESTS=$("$(dirname "$0")/pool-state.py" base-red show --tests 2>/dev/null || true)
-    export MULTI_AGENT_HERDR_BASE_RED_TESTS
+    HERDR_AGENT_POOL_BASE_RED_TESTS=$("$(dirname "$0")/pool-state.py" base-red show --tests 2>/dev/null || true)
+    export HERDR_AGENT_POOL_BASE_RED_TESTS
 fi
 # The project's check variables (verify.check_env, plus verify.docs_only_env on a docs-only
 # merge), one NAME=value per line. A variable the caller exported wins (for example

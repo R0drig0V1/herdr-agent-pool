@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """PreToolUse guard for Bash: shell-side counterpart of guard-main-worktree.sh.
 
-Part of the multi-agent-herdr plugin (ported from multi-agent 0.1.0; only the plugin id
+Part of the herdr-agent-pool plugin (ported from multi-agent 0.1.0; only the plugin id
 and the block message differ).
 
 Only the integrator session (CLAUDE_ROLE=integrator) may change the main worktree or the
 protected branches (see "Multi-agent workflow" in CLAUDE.md). In pool mode (an `integrators`
-object in `.claude/multi-agent-herdr.json`, docs/multi-integrator.md) the roles split: the
+object in `.claude/herdr-agent-pool.json`, docs/multi-integrator.md) the roles split: the
 coordinator (CLAUDE_ROLE=coordinator) owns the main worktree, the pool's integrators
 (CLAUDE_ROLE=integrator) work in their own verify worktrees, and both push a protected branch
 only through the merge lock, `pool-state.py lock run ... -- git push ...` (integrate-pr.sh
@@ -17,7 +17,7 @@ that enabled the plugin in `.claude/settings.json` or `.claude/settings.local.js
 every other session, it blocks:
 
 * from any worktree: `git push` to a protected branch (`main`, the project's `base_branch`
-  and its `protected_branches` patterns, from `.claude/multi-agent-herdr.json`; see
+  and its `protected_branches` patterns, from `.claude/herdr-agent-pool.json`; see
   scripts/project-config.py), `git push --all` / `--mirror`, and `gh pr merge`.
 * from any worktree, herdr commands that type into another pane or take over another agent:
   `herdr agent send-keys|attach|rename`, `herdr pane run|send-keys|send-text`,
@@ -74,7 +74,7 @@ DEP_CHANGERS = {
 # Writes under these prefixes are allowed: a list of paths to match, not a file being created.
 TEMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/", "/dev/")  # noqa: S108
 SEPARATORS = {"&&", "||", ";", "|", "&"}
-PLUGIN_ID = "multi-agent-herdr@claude-code-herdr"
+PLUGIN_ID = "herdr-agent-pool@herdr-agent-pool"
 
 
 def git_dirs(path: str) -> tuple[str, str] | None:
@@ -134,7 +134,7 @@ project_config = _load_project_config()
 def settings(path: str) -> dict[str, Any] | None:
     """Project settings of the enabled repository containing `path`, or None.
 
-    An invalid `.claude/multi-agent-herdr.json` gives the defaults marked `invalid`: the
+    An invalid `.claude/herdr-agent-pool.json` gives the defaults marked `invalid`: the
     defaults still protect `main` and name the herdr agents, and `privileges` grants nothing
     to anyone while the file is invalid (fail closed: every role is read-only until it is
     fixed; the Edit guard lets the integrator or coordinator fix the file itself).
@@ -165,8 +165,8 @@ POOL_ROLES = {
 PROTECTED_ENV = frozenset(
     {
         "CLAUDE_ROLE",
-        "MULTI_AGENT_HERDR_NAME",
-        "MULTI_AGENT_HERDR_SLOT",
+        "HERDR_AGENT_POOL_NAME",
+        "HERDR_AGENT_POOL_SLOT",
         "HERDR_ENV",
         # herdr's own pane variables: `herdr pane current --current` honours HERDR_PANE_ID.
         "HERDR_PANE_ID",
@@ -556,7 +556,7 @@ def check_push(args: list[str], config: dict[str, Any], locked: bool) -> str | N
                     f"`{LOCK_RUNNER} lock run --owner <name> -- git push ...` "
                     "(integrate-pr.sh does)")  # fmt: skip
         return (f"pushing to the protected branch {branch}; open a pull request "
-                "with /multi-agent-herdr:pr instead")  # fmt: skip
+                "with /herdr-agent-pool:pr instead")  # fmt: skip
     return None
 
 
@@ -627,14 +627,14 @@ def main() -> int:
     if not reason:
         return 0
     if config is not None and config.get("invalid"):
-        reason += (". .claude/multi-agent-herdr.json is invalid (run the plugin's "
+        reason += (". .claude/herdr-agent-pool.json is invalid (run the plugin's "
                    "project-config.py): every session is read-only until it is fixed")  # fmt: skip
     print(
         f"Blocked: {reason}.\n"
         "Only the integrator agent (in pool mode: the coordinator) may change the main worktree, "
         "and only the integrator(s) the protected branches. "
         "Development happens "
-        "in a worktree of its own, started by the integrator with /multi-agent-herdr:dispatch "
+        "in a worktree of its own, started by the integrator with /herdr-agent-pool:dispatch "
         '(one git worktree and one herdr workspace per agent). See "Multi-agent workflow" in '
         "CLAUDE.md. If you are the integrator, launch Claude Code with scripts/integrator.sh "
         "(CLAUDE_ROLE=integrator).",

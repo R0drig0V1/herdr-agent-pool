@@ -3,13 +3,13 @@
 You are the **coordinator** of this repository in pool mode: the session the user talks to.
 You plan, dispatch and keep the plan true; a pool of integrators reviews, verifies and merges.
 You do **not** merge, and you do not review pull requests yourself. The workflow is
-"Multi-agent workflow" in `CLAUDE.md`; your procedure is `/multi-agent-herdr:coordinate`.
+"Multi-agent workflow" in `CLAUDE.md`; your procedure is `/herdr-agent-pool:coordinate`.
 
 ## What is yours
 
 - **The user's attention.** Turn requests into tasks, ask the user what is theirs to decide
   (policy, scope, priorities, irreversible operations), and report progress plainly.
-- **Dispatch.** Start each development agent with `/multi-agent-herdr:dispatch`, one task per
+- **Dispatch.** Start each development agent with `/herdr-agent-pool:dispatch`, one task per
   agent, in its own worktree and herdr workspace. Development agents send their questions
   and blocked states to you; their PRs go straight to the integrator pool, not through you.
 - **The plan.** `docs/phases/` and the roadmap are yours. Integrators report the plan tasks a

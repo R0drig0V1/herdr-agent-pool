@@ -17,7 +17,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
-unset CLAUDE_ROLE HERDR_ENV MULTI_AGENT_HERDR_NAME
+unset CLAUDE_ROLE HERDR_ENV HERDR_AGENT_POOL_NAME
 
 # Not under a temporary directory: the Bash guard deliberately allows writes there, so the
 # test repositories must live somewhere it protects.
@@ -38,11 +38,11 @@ new_repo() {  # new_repo <dir> <enable: yes|no|false|local-false>
     mkdir -p "$1/.claude"
     case "$2" in
         yes) cp "$root/template/.claude/settings.json" "$1/.claude/settings.json" ;;
-        false) printf '{"enabledPlugins": {"multi-agent-herdr@claude-code-herdr": false}}\n' \
+        false) printf '{"enabledPlugins": {"herdr-agent-pool@herdr-agent-pool": false}}\n' \
                    > "$1/.claude/settings.json" ;;
         local-false)
             cp "$root/template/.claude/settings.json" "$1/.claude/settings.json"
-            printf '{"enabledPlugins": {"multi-agent-herdr@claude-code-herdr": false}}\n' \
+            printf '{"enabledPlugins": {"herdr-agent-pool@herdr-agent-pool": false}}\n' \
                 > "$1/.claude/settings.local.json" ;;
     esac
 }
@@ -124,11 +124,11 @@ expect 2 "bash: bash -c git commit in main worktree"  "$g" "$(bash_cmd "bash -c 
 expect 0 "bash: push to dev without settings"         "$g" "$(bash_cmd 'git push origin HEAD:dev' "$x")"
 expect 0 "bash: push a feature branch"                "$g" "$(bash_cmd 'git push -u origin HEAD' "$x")"
 
-# .claude/multi-agent-herdr.json: an integration branch, another integrator name, extra
+# .claude/herdr-agent-pool.json: an integration branch, another integrator name, extra
 # protected patterns and another worktree prefix (scripts/project-config.py).
 cfg="$work/cfg"
 new_repo "$cfg" yes
-cat > "$cfg/.claude/multi-agent-herdr.json" <<'JSON'
+cat > "$cfg/.claude/herdr-agent-pool.json" <<'JSON'
 {"$comment": "test", "base_branch": "dev", "integrator_name": "integrador",
  "protected_branches": ["promote/*"], "worktree_prefix": "chat-"}
 JSON
@@ -163,7 +163,7 @@ bad_cfg="$work/bad-cfg"
 new_repo "$bad_cfg" yes
 for json in '{"base_brnch": "dev"}' '{"integrator_name": "Integrador"}' '{"base_branch": "a..b"}' \
             '{"protected_branches": "main"}' '[]' '{"base_branch": '; do
-    printf '%s\n' "$json" > "$bad_cfg/.claude/multi-agent-herdr.json"
+    printf '%s\n' "$json" > "$bad_cfg/.claude/herdr-agent-pool.json"
     (cd "$bad_cfg" && "$pc" >/dev/null 2>&1); status=$?
     if [[ $status == 1 ]]; then echo "ok    project-config: rejects $json"
     else echo "FAIL  project-config: accepted $json (exit $status)"; fails=$((fails + 1)); fi
@@ -186,7 +186,7 @@ expect 0 "edit: settings.local.json sets false"       "$w" "$(file_op "$ldis/new
 
 s="$hooks/session-start-worktree.sh"
 out=$(jq -nc --arg d "$on" '{cwd: $d}' | "$s")
-if jq -e '.hookSpecificOutput.additionalContext | contains("/multi-agent-herdr:dispatch")' <<<"$out" >/dev/null; then
+if jq -e '.hookSpecificOutput.additionalContext | contains("/herdr-agent-pool:dispatch")' <<<"$out" >/dev/null; then
     echo "ok    session-start: instructions in main worktree"
 else
     echo "FAIL  session-start: no instructions in main worktree"; fails=$((fails + 1))
@@ -207,7 +207,7 @@ target="$work/target"
 new_repo "$target" no
 (cd "$target" && bash "$root/install.sh" >/dev/null) || { echo "FAIL  install: exit $?"; fails=$((fails + 1)); }
 for f in CLAUDE.md scripts/check.sh scripts/integrator.sh scripts/coordinator.sh .claude/prompts/integrator.md \
-         .claude/prompts/coordinator.md .claude/settings.json .claude/multi-agent-herdr.json; do
+         .claude/prompts/coordinator.md .claude/settings.json .claude/herdr-agent-pool.json; do
     if [[ -f "$target/$f" ]]; then echo "ok    install: $f"
     else echo "FAIL  install: missing $f"; fails=$((fails + 1)); fi
 done
@@ -222,7 +222,7 @@ else
 fi
 printf '{"model": "opus"}\n' > "$target/.claude/settings.json"
 (cd "$target" && bash "$root/install.sh" >/dev/null)
-if jq -e '.model == "opus" and .enabledPlugins["multi-agent-herdr@claude-code-herdr"]' \
+if jq -e '.model == "opus" and .enabledPlugins["herdr-agent-pool@herdr-agent-pool"]' \
     "$target/.claude/settings.json" >/dev/null; then
     echo "ok    install: merges an existing settings.json"
 else
@@ -237,7 +237,7 @@ printf '{"enabledPlugins": {"multi-agent@claude-code-multi-agent": true}, "model
     > "$old/.claude/settings.json"
 out=$(cd "$old" && bash "$root/install.sh")
 if jq -e '.enabledPlugins["multi-agent@claude-code-multi-agent"] == false
-          and .enabledPlugins["multi-agent-herdr@claude-code-herdr"] == true and .model == "opus"' \
+          and .enabledPlugins["herdr-agent-pool@herdr-agent-pool"] == true and .model == "opus"' \
     "$old/.claude/settings.json" >/dev/null && grep -q 'disabled multi-agent@claude-code-multi-agent' <<<"$out"; then
     echo "ok    install: disables the old multi-agent plugin and says so"
 else
@@ -246,14 +246,14 @@ else
 fi
 before=$(cat "$old/.claude/settings.json")
 out=$(cd "$old" && bash "$root/install.sh")
-if [[ "$(cat "$old/.claude/settings.json")" == "$before" ]] && grep -q 'already enables multi-agent-herdr' <<<"$out" \
+if [[ "$(cat "$old/.claude/settings.json")" == "$before" ]] && grep -q 'already enables herdr-agent-pool' <<<"$out" \
     && ! grep -q 'disabled multi-agent@' <<<"$out"; then
     echo "ok    install: second run with the old plugin off changes nothing"
 else
     echo "FAIL  install: second run with the old plugin off: $out"; fails=$((fails + 1))
 fi
 # The new plugin already on, the old one too (settings written by hand): only the old one changes.
-printf '{"enabledPlugins": {"multi-agent@claude-code-multi-agent": true, "multi-agent-herdr@claude-code-herdr": true}}\n' \
+printf '{"enabledPlugins": {"multi-agent@claude-code-multi-agent": true, "herdr-agent-pool@herdr-agent-pool": true}}\n' \
     > "$old/.claude/settings.json"
 out=$(cd "$old" && bash "$root/install.sh" --dry-run)
 if jq -e '.enabledPlugins["multi-agent@claude-code-multi-agent"] == true' "$old/.claude/settings.json" >/dev/null \
@@ -263,7 +263,7 @@ else
     echo "FAIL  install: --dry-run with the old plugin: $out"; fails=$((fails + 1))
 fi
 (cd "$old" && bash "$root/install.sh" >/dev/null)
-if jq -e '.enabledPlugins == {"multi-agent@claude-code-multi-agent": false, "multi-agent-herdr@claude-code-herdr": true}' \
+if jq -e '.enabledPlugins == {"multi-agent@claude-code-multi-agent": false, "herdr-agent-pool@herdr-agent-pool": true}' \
     "$old/.claude/settings.json" >/dev/null; then
     echo "ok    install: both enabled by hand, the old one is turned off"
 else
@@ -389,7 +389,7 @@ fi
 sed -i.bak 's/"pane_id":"w1:p1"/"name":"integrator-on","pane_id":"w1:p1"/' "$FAKE_AGENTS" && rm -f "$FAKE_AGENTS.bak"
 msg=$(cd "$on" && env PATH="$fake:$PATH" HERDR_ENV=1 CLAUDE_ROLE=integrator FAKE_PANE=w4:p1 \
     "$claim" 2>&1 >/dev/null)
-if [[ "$msg" == *integrator_name* && "$msg" == *multi-agent-herdr.json* ]]; then
+if [[ "$msg" == *integrator_name* && "$msg" == *herdr-agent-pool.json* ]]; then
     echo "ok    claim-integrator: a clash explains the integrator_name fix"
 else
     echo "FAIL  claim-integrator: clash message without the fix: $msg"; fails=$((fails + 1))
@@ -461,7 +461,7 @@ run_ssi exit3 "$on" FAKE_CLAIM_CODES=3 \
     FAKE_CLAIM_MSG="the herdr name 'integrator-on' is held by pane w4:p1 (cwd $off)"
 check_ssi "exit 3: names the holder and says to ask the user" \
     bash -c '[[ "$1" == *"already holds"* && "$1" == *"pane w4:p1"* && "$1" == *"ask"*"user"* ]]' _ "$(ctx)"
-run_ssi exit1 "$on" FAKE_CLAIM_CODES=1 FAKE_CLAIM_MSG="invalid .claude/multi-agent-herdr.json"
+run_ssi exit1 "$on" FAKE_CLAIM_CODES=1 FAKE_CLAIM_MSG="invalid .claude/herdr-agent-pool.json"
 check_ssi "other failure: short warning, session continues" \
     bash -c '[[ "$1" == *warning* && "$1" == *"exit 1"* && "$1" == *invalid* ]]' _ "$(ctx)"
 run_ssi slow "$on" FAKE_CLAIM_SLEEP=5
@@ -516,7 +516,7 @@ for dir in "My-App" "Data Lab" "api.server" "___" "UPPER_case-9" \
     fi
 done
 # An explicit integrator_name wins in integrator.sh too.
-printf '{"integrator_name": "integrador"}\n' > "$names/My-App/.claude/multi-agent-herdr.json"
+printf '{"integrator_name": "integrador"}\n' > "$names/My-App/.claude/herdr-agent-pool.json"
 sh=$(HERDR_ENV=1 "$names/My-App/scripts/integrator.sh" --print-name 2>&1)
 [[ "$sh" == integrador ]] && echo "ok    integrator.sh: configured integrator_name wins" \
     || { echo "FAIL  integrator.sh: configured name ignored (got '$sh')"; fails=$((fails + 1)); }

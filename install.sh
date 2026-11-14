@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the multi-agent-herdr workflow into the git repository of the current directory.
+# Install the herdr-agent-pool workflow into the git repository of the current directory.
 #
 # Part of herdr-agent-pool (ported from claude-code-multi-agent 0.1.0's install.sh; only the
 # repository, plugin id and next steps differ).
@@ -25,8 +25,8 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/R0drig0V1/herdr-agent-pool.git"
-MARKETPLACE="claude-code-herdr"
-PLUGIN="multi-agent-herdr@${MARKETPLACE}"
+MARKETPLACE="herdr-agent-pool"
+PLUGIN="herdr-agent-pool@${MARKETPLACE}"
 OLD_PLUGIN="multi-agent@claude-code-multi-agent"   # the plugin this one replaces
 
 dry_run=false
@@ -127,7 +127,7 @@ for line in ".claude/settings.local.json" ".env"; do
 done
 
 $dry_run && echo "dry run: nothing was written" && echo
-echo "multi-agent-herdr workflow -> $target"
+echo "herdr-agent-pool workflow -> $target"
 for f in ${copied[@]+"${copied[@]}"}; do echo "  + $f"; done
 for f in ${skipped[@]+"${skipped[@]}"}; do echo "  = $f (exists, kept; --force to overwrite)"; done
 [[ -n "$settings_note" ]] && echo "  ~ .claude/settings.json: $settings_note"
@@ -149,10 +149,10 @@ Next steps:
      This plugin replaces multi-agent@claude-code-multi-agent: the installer sets it to false
      in .claude/settings.json (by hand when jq is missing). Uninstall it if you no longer
      use it elsewhere.
-  4. Inside herdr, run /multi-agent-herdr:setup once, launch the integrator with
+  4. Inside herdr, run /herdr-agent-pool:setup once, launch the integrator with
      scripts/integrator.sh, and start development agents from it with
-     /multi-agent-herdr:dispatch <type>/<name> <task>.
-     Many agents: add an "integrators" object to .claude/multi-agent-herdr.json and launch
+     /herdr-agent-pool:dispatch <type>/<name> <task>.
+     Many agents: add an "integrators" object to .claude/herdr-agent-pool.json and launch
      scripts/coordinator.sh instead (pool mode, docs/multi-integrator.md); set this
-     machine's limits in ~/.config/multi-agent-herdr/resources.json.
+     machine's limits in ~/.config/herdr-agent-pool/resources.json.
 EOF

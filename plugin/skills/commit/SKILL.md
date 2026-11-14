@@ -4,7 +4,7 @@ description: Create a well-formed git commit for this repository (Conventional C
 ---
 
 <!--
-commit skill of the multi-agent-herdr plugin. Unchanged from multi-agent 0.1.0's `commit`
+commit skill of the herdr-agent-pool plugin. Unchanged from multi-agent 0.1.0's `commit`
 skill apart from this header.
 -->
 

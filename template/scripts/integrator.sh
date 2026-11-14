@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch the integrator session: the only session that may change the base branch and the main
 # worktree (see "Multi-agent workflow" in CLAUDE.md). Single-integrator mode only: in pool mode
-# (an "integrators" object in .claude/multi-agent-herdr.json) the main worktree belongs to the
+# (an "integrators" object in .claude/herdr-agent-pool.json) the main worktree belongs to the
 # coordinator (scripts/coordinator.sh), which spawns the integrators in their own verify
 # worktrees with the plugin's integrator-pool.sh; this script then refuses to launch.
 #
@@ -10,11 +10,11 @@
 #
 # - Runs in the main worktree whatever directory it is called from.
 # - Requires herdr (HERDR_ENV=1): development agents reach the integrator as the herdr agent
-#   named after `integrator_name` in .claude/multi-agent-herdr.json (default
+#   named after `integrator_name` in .claude/herdr-agent-pool.json (default
 #   `integrator-<repository directory name>`, see default_name below). The herdr agent does
 #   not exist before `exec claude`, so this script cannot name it: the plugin's SessionStart
 #   hook (session-start-integrator.sh) takes the name as each session starts, including
-#   relaunches and resumed sessions; /multi-agent-herdr:integrate and dispatch claim it again
+#   relaunches and resumed sessions; /herdr-agent-pool:integrate and dispatch claim it again
 #   as a fallback.
 # - CLAUDE_ROLE=integrator exempts the session from the guard hooks.
 # - --name <integrator_name> names the Claude Code session the same way (read with jq when
@@ -27,7 +27,7 @@ set -euo pipefail
 
 repo_root=$(dirname "$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)")
 cd "$repo_root"
-[[ "${HERDR_ENV:-}" == 1 ]] || { echo "run it inside a herdr pane (multi-agent-herdr is herdr only)" >&2; exit 1; }
+[[ "${HERDR_ENV:-}" == 1 ]] || { echo "run it inside a herdr pane (herdr-agent-pool is herdr only)" >&2; exit 1; }
 # The plugin's default_integrator_name (scripts/project-config.py), repeated here because
 # this script belongs to the project and cannot reach the plugin; the plugin's tests check
 # that both agree. Lower case, runs outside [a-z0-9_-] become '-', '-'/'_' trimmed at both
@@ -42,17 +42,17 @@ default_name() {
     printf '%s\n' "$name" | sed -E 's/[-_]+$//'
 }
 name=$(default_name "$repo_root")
-if [[ -f .claude/multi-agent-herdr.json ]]; then
-    name=$(jq -r --arg d "$name" '.integrator_name // $d' .claude/multi-agent-herdr.json) \
-        || { echo "invalid .claude/multi-agent-herdr.json" >&2; exit 1; }
+if [[ -f .claude/herdr-agent-pool.json ]]; then
+    name=$(jq -r --arg d "$name" '.integrator_name // $d' .claude/herdr-agent-pool.json) \
+        || { echo "invalid .claude/herdr-agent-pool.json" >&2; exit 1; }
 fi
 if [[ "${1:-}" == --print-name ]]; then  # used by the plugin's tests; launches nothing
     echo "$name"
     exit 0
 fi
-if [[ -f .claude/multi-agent-herdr.json && "$(jq -r '.integrators | type' .claude/multi-agent-herdr.json)" == object ]]; then
+if [[ -f .claude/herdr-agent-pool.json && "$(jq -r '.integrators | type' .claude/herdr-agent-pool.json)" == object ]]; then
     echo "pool mode: launch scripts/coordinator.sh; it spawns the integrators" \
-        "(/multi-agent-herdr:coordinate, integrator-pool.sh)" >&2
+        "(/herdr-agent-pool:coordinate, integrator-pool.sh)" >&2
     exit 1
 fi
 CLAUDE_ROLE=integrator exec claude --name "$name" \

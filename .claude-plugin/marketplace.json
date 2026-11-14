@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-herdr",
+  "name": "herdr-agent-pool",
   "owner": {
     "name": "Rodrigo Vidal",
     "url": "https://github.com/R0drig0V1"
@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "multi-agent-herdr",
+      "name": "herdr-agent-pool",
       "source": "./plugin",
       "description": "Skills, agents, guard hooks and notifications for running several Claude Code agents in parallel on one repository, coordinated through herdr.",
       "category": "development"

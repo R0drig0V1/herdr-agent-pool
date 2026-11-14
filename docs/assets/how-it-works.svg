@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1060" height="1000" viewBox="0 0 1060 1000" role="img" aria-labelledby="t d">
 <!-- The README's "How it works" diagram (pool mode). Plain SVG with light and dark styles (prefers-color-scheme); edit the coordinates by hand. -->
-<title id="t">How multi-agent-herdr works (pool mode)</title>
+<title id="t">How herdr-agent-pool works (pool mode)</title>
 <desc id="d">Swimlane diagram: the coordinator dispatches a development agent, the agent negotiates resources with the coordinator, opens a pull request and announces it to the integrator pool; one integrator claims it, verifies it in its own worktree inside a heavy slot, bounces it or pushes main under the merge lock, sends the verdict to the author and the merge report to the coordinator, which ticks the plan and cleans up the worktree.</desc>
 <style>
   .bg{fill:#ffffff}

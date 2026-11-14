@@ -1,11 +1,11 @@
 ---
 name: setup
-description: Check and, with the user's confirmation, install what the multi-agent-herdr plugin needs - the herdr binary, herdr's Claude integration and the project files - and detect the old multi-agent plugin enabled in the same project. Only when the user runs /multi-agent-herdr:setup.
+description: Check and, with the user's confirmation, install what the herdr-agent-pool plugin needs - the herdr binary, herdr's Claude integration and the project files - and detect the old multi-agent plugin enabled in the same project. Only when the user runs /herdr-agent-pool:setup.
 disable-model-invocation: true
 ---
 
 <!--
-setup skill of the multi-agent-herdr plugin. User-invoked only (disable-model-invocation) and
+setup skill of the herdr-agent-pool plugin. User-invoked only (disable-model-invocation) and
 never run from a hook. It checks first and changes anything only after an explicit
 confirmation for each step. Install command from https://herdr.dev/agent-guide.md;
 integration commands from `herdr integration` (herdr 0.9.5).
@@ -59,7 +59,7 @@ ls "$root"/scripts/check.sh "$root"/scripts/integrator.sh "$root"/.claude/prompt
 "${CLAUDE_PLUGIN_ROOT}/scripts/project-config.py" --root "$root"; echo "exit=$?"
 ```
 
-- The settings (`.claude/multi-agent-herdr.json`): report `base_branch`,
+- The settings (`.claude/herdr-agent-pool.json`): report `base_branch`,
   `integrator_name` and `mode`. In pool mode (`integrators` set) also report
   `coordinator_name` and the pool's names, and check that `scripts/coordinator.sh` and
   `.claude/prompts/coordinator.md` exist (the installer copies them; an older project needs

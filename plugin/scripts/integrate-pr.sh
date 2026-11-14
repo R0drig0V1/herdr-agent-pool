@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Merge one pull request into the base branch, verified, or stop with the reason.
 #
-# Part of the multi-agent-herdr plugin (docs/multi-integrator.md, "integrate-pr.sh"); the
+# Part of the herdr-agent-pool plugin (docs/multi-integrator.md, "integrate-pr.sh"); the
 # `integrate` skill runs it after reviewing the diff. It folds in the lessons of the first
 # multi-integrator runs: stop on any conflict except mechanical index rows, abort and reset on
 # a failed verification, and keep the head branch when it moved during the verification (a
@@ -181,8 +181,8 @@ base=$(jq -r .base_branch <<<"$config")
 max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
 exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
 locked_minutes=$(jq -r '.integrators.locked_reverify_minutes // 60' <<<"$config")
-if [[ "$mode" == pool ]]; then me="${MULTI_AGENT_HERDR_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
-[[ -n "$me" ]] || { echo "pool mode: MULTI_AGENT_HERDR_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
+if [[ "$mode" == pool ]]; then me="${HERDR_AGENT_POOL_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
+[[ -n "$me" ]] || { echo "pool mode: HERDR_AGENT_POOL_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
 stop() { echo "STOP: $*" >&2; result precondition "$*"; exit 2; }
 # The role and the name come from the environment, so check them against herdr: the agent in
@@ -204,7 +204,7 @@ git_dir=$(git rev-parse --absolute-git-dir); common=$(git rev-parse --path-forma
 # and abort it. A kernel flock on a file in this worktree's git dir, held on fd 9 for the whole
 # run (the kernel frees it when we die). The verification and the push get fd 9 closed, so a
 # daemon a check leaves behind cannot hold it; a lock whose recorded run is dead is taken over.
-wt_lock="$git_dir/multi-agent-herdr-integrate.lock"
+wt_lock="$git_dir/herdr-agent-pool-integrate.lock"
 exec 9>>"$wt_lock" || stop "cannot open $wt_lock"
 if ! python3 -c 'import fcntl, sys
 try:
@@ -293,7 +293,7 @@ if ! git merge --quiet --no-ff --no-commit "$head" >/dev/null 2>&1; then
 fi
 
 # 3. Verify, heartbeating the claim meanwhile (a verification can take longer than a TTL).
-log="$git_dir/multi-agent-herdr-verify-$N.log"
+log="$git_dir/herdr-agent-pool-verify-$N.log"
 hb=""
 start_heartbeat() {  # pool mode: heartbeat the claim every 2 minutes in the background
     [[ "$mode" == pool ]] || return 0
@@ -340,11 +340,11 @@ verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, r
 }
 verified_or_out "origin/$base"
 
-msg="$git_dir/multi-agent-herdr-merge-msg-$N"
+msg="$git_dir/herdr-agent-pool-merge-msg-$N"
 printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg"
 export IPR_BASE="$base" IPR_MODE="$mode" IPR_HEAD_SHA="$head" IPR_EXEMPT="$exempt" IPR_MSG="$msg"
 export IPR_PS="$ps" IPR_N="$N" IPR_ME="$me"
-export IPR_STATE="$git_dir/multi-agent-herdr-newbase-$N"
+export IPR_STATE="$git_dir/herdr-agent-pool-newbase-$N"
 export IPR_LOG="$log" IPR_VERIFY="${verify[0]}" IPR_VERIFY_HERE="${verify[1]:-}"
 
 # 4. Commit, then push under the merge lock; re-verify when the base moved under us.

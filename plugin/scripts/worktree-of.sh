@@ -3,7 +3,7 @@
 #
 # Usage: worktree-of.sh <branch>     e.g. worktree-of.sh feat/user-login
 #
-# Part of the multi-agent-herdr plugin. The dispatch skill runs it after new-worktree.sh.
+# Part of the herdr-agent-pool plugin. The dispatch skill runs it after new-worktree.sh.
 # It is a script, not an inline awk program in SKILL.md, because Claude Code substitutes the
 # positional tokens `$0`, `$1`, ... in a skill's content with the skill's arguments
 # (https://code.claude.com/docs/en/skills#available-string-substitutions): an awk `$0` in

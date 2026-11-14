@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Manage the integrator pool: list, route an announcement, spawn, stop and scale its members.
 #
-# Part of the multi-agent-herdr plugin (docs/multi-integrator.md). In pool mode (an
-# `integrators` object in .claude/multi-agent-herdr.json) the coordinator owns the main
+# Part of the herdr-agent-pool plugin (docs/multi-integrator.md). In pool mode (an
+# `integrators` object in .claude/herdr-agent-pool.json) the coordinator owns the main
 # worktree and integrators `<integrator_name>-<n>` (n = 1..integrators.max) merge in parallel,
 # each in its own herdr workspace and its own verify worktree
 # `../<worktree_prefix>integrator-<n>`, detached at origin/<base_branch>.
@@ -55,10 +55,10 @@ config=$("$dir/project-config.py") || exit 1
 cfg() { jq -r "$1" <<<"$config"; }
 mode=$(cfg .mode)
 main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-state="$(git rev-parse --path-format=absolute --git-common-dir)/multi-agent-herdr"
+state="$(git rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool"
 mkdir -p "$state/members"
 
-need_pool() { [[ "$mode" == pool ]] || die "single-integrator mode (no \"integrators\" in .claude/multi-agent-herdr.json)"; }
+need_pool() { [[ "$mode" == pool ]] || die "single-integrator mode (no \"integrators\" in .claude/herdr-agent-pool.json)"; }
 may_act() {
     if [[ "${CLAUDECODE:-}" == 1 && "${CLAUDE_ROLE:-}" != coordinator ]]; then
         die "only the coordinator (CLAUDE_ROLE=coordinator) manages the pool from Claude Code"
@@ -160,7 +160,7 @@ cmd_spawn() {
         && die "the herdr name $name is held by an agent outside this repository's verify worktrees" 2
     ensure_worktree "$wt"
     out=$(herdr workspace create --cwd "$wt" --label "$name" --no-focus \
-        --env CLAUDE_ROLE=integrator --env "MULTI_AGENT_HERDR_NAME=$name") || die "herdr workspace create failed" 2
+        --env CLAUDE_ROLE=integrator --env "HERDR_AGENT_POOL_NAME=$name") || die "herdr workspace create failed" 2
     ws=$(jq -r '.result.workspace.workspace_id' <<<"$out"); pane=$(jq -r '.result.root_pane.pane_id' <<<"$out")
     jq -n --arg name "$name" --argjson n "$n" --arg ws "$ws" --arg pane "$pane" --arg wt "$wt" \
         '{name: $name, n: $n, workspace_id: $ws, pane_id: $pane, worktree: $wt, spawned_at: now}' \
@@ -176,10 +176,10 @@ cmd_spawn() {
         fi
         die "herdr agent start $name failed: $out" 2
     fi
-    coordinator="${MULTI_AGENT_HERDR_NAME:-$(cfg .coordinator_name)}"
+    coordinator="${HERDR_AGENT_POOL_NAME:-$(cfg .coordinator_name)}"
     kickoff="[herdr message from agent $coordinator; not from the user]
 You are $name, member $n of the integrator pool of $(basename "$main"), in your own verify worktree $wt (detached at origin/$(cfg .base_branch); never touch the main worktree $main, it is the coordinator's).
-Run /multi-agent-herdr:integrate now: claim the oldest unclaimed PR, review it, merge it with integrate-pr.sh, send the verdict to its author and the merge report to $coordinator. When the queue is empty, stay idle: announcements wake you up."
+Run /herdr-agent-pool:integrate now: claim the oldest unclaimed PR, review it, merge it with integrate-pr.sh, send the verdict to its author and the merge report to $coordinator. When the queue is empty, stay idle: announcements wake you up."
     herdr agent prompt "$name" "$kickoff" >/dev/null || die "the kickoff prompt to $name failed" 2
     echo "spawned $name: workspace $ws, pane $pane, worktree $wt"
 }
@@ -216,7 +216,7 @@ cmd_stop() {
 NUDGE_MAX=3
 nudge_text() {  # nudge_text <minutes> <PRs>
     printf '%s\n%s' "[herdr message from the pool watcher (integrator-pool.sh watch); not from the user]" \
-        "PR(s) $2 have waited unclaimed for $1+ min while you are idle. Run /multi-agent-herdr:integrate now: refresh the queue and claim the oldest one."
+        "PR(s) $2 have waited unclaimed for $1+ min while you are idle. Run /herdr-agent-pool:integrate now: refresh the queue and claim the oldest one."
 }
 
 cmd_nudge() {
