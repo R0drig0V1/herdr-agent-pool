@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   never a label that starts work. It links the issue from the code (`TODO(#N)`), the docs and
   the PR. The `pr` body gains a "Follow-ups" section; `document` files an issue for each known
   limitation it documents.
+- `docs/field-evidence.md`: what the project's first week in pool mode showed, with numbers and
+  sources: checks 7.5 times slower under load, the slot queue as the merge rate, 204 messages a
+  day to the coordinator (about 85% mechanical), lost announcements, claims that lapse while
+  their holder is alive, and CI unavailable while each change was tested twice.
 - Guideline "move work forward proactively", in the `dispatch` and `coordinate` skills, the
   coordinator and integrator prompts, the template `CLAUDE.md` and the README. The dispatcher
   starts agents for every task that can start now, without waiting to be asked, and always
