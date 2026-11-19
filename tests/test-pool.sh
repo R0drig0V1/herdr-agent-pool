@@ -21,6 +21,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 scripts="$root/plugin/scripts"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
+export HERDR_AGENT_POOL_NO_WATCH=1   # the SessionStart hook starts no watcher in the tests
 unset CLAUDE_ROLE HERDR_AGENT_POOL_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK HERDR_ENV HERDR_AGENT_POOL_SLOT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -1426,11 +1427,66 @@ check "watch: cleans up the ready worktree (cleanup-worktree.sh)" \
     bash -c '[[ "$1" == *"cleaned feat/w-done"* && ! -d "$2" ]] && grep -q "workspace-close w8" "$3"' _ "$out" "$work/single-w-done" "$FAKE_LOG"
 check "watch: leaves the dirty one alone" \
     bash -c '[[ "$1" != *w-dirty* && -f "$2/notes.txt" ]] && ! grep -q "workspace-close w9" "$3"' _ "$out" "$work/single-w-dirty" "$FAKE_LOG"
+# retry-stalled.py: an agent whose last turn stopped on an API error is asked to continue.
+rs="$scripts/retry-stalled.py"
+rpass() { (cd "$single" && env HERDR_ENV=1 "$@" "$rs" 2>&1); }
+dpath="$work/single-w-dirty"
+dtx="$HERDR_AGENT_POOL_CLAUDE_PROJECTS/${dpath//[^A-Za-z0-9]/-}/sess-wdirty.jsonl"
+api_error() {  # api_error <transcript> <text> [kind]: its last turn becomes an API error
+    mkdir -p "$(dirname "$1")"
+    jq -nc '{type: "user", message: {role: "user", content: "x"}}' >> "$1"
+    jq -nc --arg t "$2" --arg k "${3:-server_error}" '{type: "assistant", isApiErrorMessage: true, error: $k,
+        message: {model: "<synthetic>", content: [{type: "text", text: $t}]}}' >> "$1"
+    jq -nc '{type: "cost-state"}' >> "$1"
+}
+answered() { jq -nc '{type: "assistant", message: {model: "m", content: [{type: "text", text: "ok"}]}}' >> "$1"; }
+retries() { grep -c "^prompt $1 \[herdr message from the watcher (retry-stalled.py)" "$FAKE_LOG"; }
+agents integrator-single w1:p1 working "$single"  wdirty w9:p1 idle "$dpath"
+: > "$FAKE_LOG"; out=$(rpass)
+check "retry: an agent without a transcript is left alone" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(retries wdirty)"
+api_error "$dtx" "API Error: Connection lost mid-response."; out=$(rpass)
+check "retry: an idle agent stopped by an API error is asked to continue (RETRY line)" \
+    bash -c '[[ "$1" == "RETRY wdirty 1/20 API Error: Connection lost mid-response." && $2 == 1 ]]' _ "$out" "$(retries wdirty)"
+out=$(rpass)
+check "retry: not again before the backoff (60 s)" bash -c '[[ -z "$1" && $2 == 1 ]]' _ "$out" "$(retries wdirty)"
+out=$(rpass HERDR_AGENT_POOL_RETRY_BASE=0)
+check "retry: again after the backoff" bash -c '[[ "$1" == "RETRY wdirty 2/20 "* && $2 == 2 ]]' _ "$out" "$(retries wdirty)"
+agents integrator-single w1:p1 working "$single"  wdirty w9:p1 working "$dpath"
+out=$(rpass HERDR_AGENT_POOL_RETRY_BASE=0)
+check "retry: a working agent is left alone" bash -c '[[ -z "$1" && $2 == 2 ]]' _ "$out" "$(retries wdirty)"
+agents integrator-single w1:p1 working "$single"  wdirty w9:p1 "done" "$dpath"
+out=$(rpass HERDR_AGENT_POOL_RETRY_BASE=0 HERDR_AGENT_POOL_RETRY_MAX=2); out2=$(rpass HERDR_AGENT_POOL_RETRY_BASE=0 HERDR_AGENT_POOL_RETRY_MAX=2)
+check "retry: gives up after the maximum, said once" \
+    bash -c '[[ "$1" == "GAVE-UP wdirty after 2 retries: "* && -z "$2" && $3 == 2 ]]' _ "$out" "$out2" "$(retries wdirty)"
+answered "$dtx"; out=$(rpass)
+check "retry: a turn that ended well forgets the count" \
+    bash -c '[[ -z "$1" && ! -e "$2/retry-stalled/wdirty.json" ]]' _ "$out" "$sst"
+api_error "$dtx" "API Error: Invalid API key" authentication_failed; out=$(rpass); out2=$(rpass)
+check "retry: an error a retry cannot fix is not retried, said once" \
+    bash -c '[[ "$1" == "NO-RETRY wdirty: "*"Invalid API key" && -z "$2" && $3 == 2 ]]' _ "$out" "$out2" "$(retries wdirty)"
+check "retry: a development agent may not run it (exit 1)" \
+    exits 1 env CLAUDECODE=1 CLAUDE_ROLE= bash -c 'cd "$1" && "$2"' _ "$single" "$rs"
+rm -f "$dtx"
+# The watcher runs it first; the integrator it retried gets nothing else in that pass.
+open_list 57:h57; wpass >/dev/null
+api_error "$itx" "API Error: Can't reach the API server"
+agents integrator-single w1:p1 idle "$single"
+: > "$FAKE_LOG"; out=$(wpass)
+check "watch: retries the integrator stopped by an API error, and sends nothing else in that pass" \
+    bash -c '[[ "$1" == "RETRY integrator-single 1/20 "* && "$1" != *woke* && $2 == 1 && $3 == 0 ]]' _ "$out" "$(retries integrator-single)" "$(prompts)"
+out=$(wpass)
+check "watch: the news goes out on the next pass" \
+    bash -c '[[ "$1" == *"woke integrator-single: PR #57 waits"* && "$1" != *RETRY* ]]' _ "$out"
+open_list; transcript 30000
 (cd "$single" && exec env HERDR_ENV=1 "$iw" 10 > "$work/iwatch.out" 2>&1) & iwatcher=$!
 until_true test -s "$sst/integrator-watch.pid"
 out=$(cd "$single" && env HERDR_ENV=1 "$iw" 10 2>&1); status=$?
 check "watch: a second watcher exits 0 at once" bash -c '[[ $1 == 0 && "$2" == *"already runs"* ]]' _ "$status" "$out"
 kill "$(cat "$sst/integrator-watch.pid")" 2>/dev/null; wait "$iwatcher" 2>/dev/null
+agents wdirty w9:p1 idle "$dpath"
+out=$(cd "$single" && env HERDR_ENV=1 HERDR_AGENT_POOL_GONE_PASSES=1 "$iw" 10 2>&1); status=$?
+check "watch: the loop ends once the integrator is gone from herdr" \
+    bash -c '[[ $1 == 0 && "$2" == *"integrator-single is gone from herdr; stopping"* ]]' _ "$status" "$out"
 unset FAKE_PANES; rm -f "$FAKE_GH/list-open.json" "$FAKE_GH/list-merged.json"
 
 echo

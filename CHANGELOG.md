@@ -36,6 +36,14 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   reserves numbers; `pool-state.py reserve` still works but is not used by it. In a measured
   run, a reserved 0002 failed a "contiguous from 0001" check while 0001 was unfinished, and
   the agent stopped to ask the user.
+- Agents stopped by an API error are asked to continue (decision 0012): a network cut or a
+  machine that slept ends an agent's turn, and it then waited until someone wrote to it (a
+  measured run stood still for two and a half hours). The watchers now run
+  `retry-stalled.py` every minute: an idle agent whose transcript ends with an API error gets
+  one message to continue, with a backoff from 1 to 15 minutes and at most 20 retries; errors
+  a retry cannot fix are left alone. Single mode's watcher now starts with the integrator's
+  session (the SessionStart hook; `HERDR_AGENT_POOL_NO_WATCH=1` turns it off) instead of on
+  its first `integrate` pass, and ends when the integrator is gone from herdr.
 - A slimmer single-mode integrator (decision 0010): its mechanical steps moved into scripts
   that spend no tokens.
   - `integrate-pr.sh` ticks the plan tasks the PR body lists by id (`T1.2`) under "Plan tasks
