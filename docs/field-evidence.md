@@ -1,10 +1,10 @@
-<!-- Field evidence from the project's first week in pool mode (2026-11-09 to 2026-11-14): delays,
+<!-- Field evidence from one project's first week in pool mode (2026-11-09 to 2026-11-14): delays,
      bottlenecks, slow checks and communication overhead, with numbers and sources. Read it
      before changing the pool's design; docs/multi-integrator.md describes the design itself. -->
 
-# Field evidence: the project in pool mode, November 2026
+# Field evidence: one project in pool mode, November 2026
 
-This page records what we measured and saw while the project ran on this plugin in pool mode:
+This page records what we measured and saw while one project ran on this plugin in pool mode:
 where time went, what blocked, and what broke. It is the evidence behind the change plan
 (C1-C19) and behind the orchestration redesign under discussion. Every number has a source
 and a date. Where something was seen once, the page says so.
@@ -26,7 +26,7 @@ and a date. Where something was seen once, the page says so.
 
 | | |
 |---|---|
-| Project | the project (GitHub repository `a private repository`, private), base branch `develop` |
+| Project | a desktop app with a Python backend, a web frontend and a Rust shell; base branch `develop` |
 | Machine | one Apple M4 laptop: 10 cores, 24 GB |
 | Roles | 1 coordinator, 3 integrators, about 15 development agents at peak |
 | Resources | `heavy_slots` 3 (test suites), `light_slots` 2 (worktree setup) |
@@ -43,12 +43,12 @@ and a date. Where something was seen once, the page says so.
 | Communication | 204 messages to the coordinator in 24 h, about 85% mechanical | the coordinator spends its time relaying | proposals A and B2, not done |
 | Delivery | prompts fail when the target has a dialog open; announcements get lost | stalled PRs until someone notices | pool watcher (C10) deployed |
 | Coordination | reserved migration numbers block finished PRs; a sweep removed a fresh worktree | waiting, and a lost (empty) worktree | C11b open; C19 proposed |
-| CI | GitHub Actions unavailable since 2026-11-10 | every check runs on the laptop | open: self-hosted runners proposed |
+| CI | GitHub Actions unavailable from 2026-11-10 | every check runs on the laptop | open: self-hosted runners proposed |
 | CI cost | ~1,600 runs in 6 days; half the minutes on jobs shorter than a minute | about USD 250 a month at GitHub prices | `docs/ci-workflows.md` (branch) |
 
 ## Checks: slow, and slower under load
 
-Measured by the project (`docs/architecture/testing.md` in that repository, "Timings").
+Measured by the project's own timing notes.
 
 **Alone, the checks are reasonable.** After the project's own work, `check.sh` takes 62 s
 (pytest 60 s with 4 workers, 1,664 tests), down from 126 s. A second run on the same tree
@@ -91,7 +91,7 @@ train.
   measurement).
 - **Verify times.** A fast verify took 112 s at the median and 239 s at the 90th percentile; a
   full one about 595 s; a desktop one about 10 min. Each holds a slot for that long.
-- **First night.** the project lost hours to the slot queue and to one integrator that stayed
+- **First night.** The project lost hours to the slot queue and to one integrator that stayed
   blocked.
 
 Fixes so far, on branch `feat/pool-tuning`, deployed live:
@@ -164,10 +164,12 @@ overhead.
 
 ## CI on GitHub
 
-From the Actions API of `a private repository`, 2026-11-09 to 2026-11-14.
+From the project's GitHub Actions API, 2026-11-09 to 2026-11-14.
 
-- **Blocked since 2026-11-10.** Of 1,638 runs, 1,444 failed. The 1,343 failures from
-  2026-11-10 on took about 4 seconds each and never started. Since then every check has run only on the laptop.
+- **Unavailable from 2026-11-10.** Of 1,638 runs, 1,444 failed. The 1,343 failures from
+  2026-11-10 on took about 4 seconds each: the jobs were never started, so CI on GitHub was
+  unavailable for the rest of the period. The first day alone used about 400 minutes. From
+  then on every check ran only on the laptop.
 - **Each change was tested twice.** `ci.yml` and `quality.yml` run on `pull_request` and on
   `push` to the base. That is 558 PR runs plus 236 push runs per workflow, and the push run
   re-tests what the integrator already verified locally.
@@ -205,9 +207,9 @@ what was observed.
 
 | Evidence | Source |
 |----------|--------|
-| check timings, contention, slot waits (670 s for 44 s), cargo | the project `docs/architecture/testing.md`, "Timings" (2026-11-11) |
+| check timings, contention, slot waits (670 s for 44 s), cargo | the project's own timing notes (2026-11-11) |
 | verify percentiles, 175 of 259 waits | the pool integrators' verify logs, analysed 2026-11-13 |
-| message counts | coordinator-the project's count by kind, 2026-11-13 |
-| incidents (C9-C19) | coordinator-the project's reports to the plugin, 2026-11-11 to 2026-11-14 |
-| CI runs, minutes | GitHub Actions API for `a private repository`, 2026-11-14 |
+| message counts | the coordinator's count by kind, 2026-11-13 |
+| incidents (C9-C19) | the coordinator's reports to the plugin, 2026-11-11 to 2026-11-14 |
+| CI runs, unavailability, minutes | the project's GitHub Actions API, 2026-11-14 |
 | prices | GitHub Actions runner pricing, January 2026 (USD 0.006 per Linux 2-core minute) |

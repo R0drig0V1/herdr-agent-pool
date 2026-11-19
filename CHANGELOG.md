@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Lessons from the project's first night in pool mode (3 integrators, about 15 agents).
+Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
 - **Renamed to `herdr-agent-pool`**, so it no longer shares its names with the separate
@@ -35,7 +35,7 @@ Lessons from the project's first night in pool mode (3 integrators, about 15 age
   never a label that starts work. It links the issue from the code (`TODO(#N)`), the docs and
   the PR. The `pr` body gains a "Follow-ups" section; `document` files an issue for each known
   limitation it documents.
-- `docs/field-evidence.md`: what the project's first week in pool mode showed, with numbers and
+- `docs/field-evidence.md`: what one project's first week in pool mode showed, with numbers and
   sources: checks 7.5 times slower under load, the slot queue as the merge rate, 204 messages a
   day to the coordinator (about 85% mechanical), lost announcements, claims that lapse while
   their holder is alive, and CI unavailable while each change was tested twice.
@@ -156,8 +156,7 @@ plugin id are still `claude-code-herdr` and `multi-agent-herdr@claude-code-herdr
 - `verify-merge.sh --here` (verify the current worktree); `agents-in-repo.py --detached` and
   `--dev-only`.
 - `tests/test-pool.sh` (also in CI); docs/multi-integrator.md (design, failure modes, open
-  questions) and docs/migration-multi-integrator.md (switching a project, the project as the
-  example).
+  questions) and docs/migration-multi-integrator.md (switching a project).
 - SessionStart hook `session-start-integrator.sh`: an integrator session (`CLAUDE_ROLE=integrator`,
   inside herdr, in the main worktree of a repository that enables the plugin) takes its herdr
   name with `scripts/claim-integrator.sh` as it starts, relaunches and resumed sessions
