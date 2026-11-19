@@ -76,6 +76,9 @@ tell the user (pool mode: the coordinator).
 Exit 0: yours until `integrate-pr.sh` releases it or you record a bounce. Exit 3: another
 integrator was faster; back to the queue.
 
+**Someone else's PR** (`gh pr view <N> --json author -q .author.login` differs from
+`gh api user -q .login`): read-only until the user says yes; read `references/foreign-pr.md`.
+
 ## 2. Review
 
 ```bash
@@ -191,9 +194,8 @@ EOF
 herdr agent prompt "<name>" "$VERDICT"; echo "exit=$?"
 ```
 
-**The merge touched files other branches are likely to share** (migrations, shared models,
-lockfiles, `CLAUDE.md`, `docs/phases/`; see `git diff --name-only <sha>^1 <sha>`): tell the
-other agents, as `references/base-moved.md` says.
+**Never tell the other agents that `<base>` moved.** Every PR is verified merged onto the
+current base, so a real clash comes back as a bounce; the message only costs turns.
 
 **Clean up** (single mode only; in pool mode the coordinator does it). Once the author of a
 merged branch has wrapped up, discard its workspace, worktree and branch:
@@ -214,6 +216,8 @@ any promotion read `references/promotion.md`.
 
 ## Never
 
+- Work on a PR that another GitHub account opened (a contributor, a bot such as Dependabot)
+  without the user's yes for that PR: see "Someone else's pull request".
 - Develop features or fix an author's code: bounce it.
 - Force-push `<base>` or `main`, rewrite their history, or merge with red checks.
 - Push `<base>` by hand in pool mode (only `integrate-pr.sh`, under the merge lock), or review

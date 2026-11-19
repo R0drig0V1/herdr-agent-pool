@@ -7,7 +7,11 @@
 # a failed verification, and keep the head branch when it moved during the verification (a
 # premature deletion closed PRs twice).
 #
-# Usage: integrate-pr.sh <PR number> [--union-rows PATH]...
+# Usage: integrate-pr.sh <PR number> [--union-rows PATH]... [--author-ok LOGIN]
+#
+# A PR opened by another GitHub account than the one `gh` is logged in as (a contributor, a
+# bot) is refused (exit 2) until the user says yes to that PR: then pass --author-ok with the
+# PR author's login. The yes is asked again for every such PR.
 #
 # Only for CLAUDE_ROLE=integrator, and inside herdr only for the session whose herdr agent is
 # the integrator's name; in pool mode that agent must also be one of `integrator_pool`, and
@@ -163,12 +167,13 @@ sys.exit(0 if all(any(fnmatch.fnmatchcase(p, q) for q in pats) for p in paths) e
     fail 6 "git push failed: $out"
 fi
 
-usage() { echo "usage: integrate-pr.sh <PR number> [--union-rows PATH]..." >&2; exit 1; }
+usage() { echo "usage: integrate-pr.sh <PR number> [--union-rows PATH]... [--author-ok LOGIN]" >&2; exit 1; }
 N="${1:-}"; [[ "$N" =~ ^[0-9]+$ ]] || usage; shift
-union=()
+union=() author_ok=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --union-rows) [[ $# -ge 2 ]] || usage; union+=("$2"); shift 2 ;;
+        --author-ok) [[ $# -ge 2 ]] || usage; author_ok="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -235,12 +240,18 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
 fi
 [[ -z "$(git status --porcelain)" ]] || { git status --short >&2; stop "the worktree $top is not clean"; }
 
-pr=$(gh pr view "$N" --json number,title,body,headRefName,headRefOid,baseRefName,state,isCrossRepository) \
+pr=$(gh pr view "$N" --json number,title,body,headRefName,headRefOid,baseRefName,state,isCrossRepository,author) \
     || stop "gh pr view $N failed"
 B=$(jq -r .headRefName <<<"$pr"); head=$(jq -r .headRefOid <<<"$pr"); title=$(jq -r .title <<<"$pr")
 [[ "$(jq -r .state <<<"$pr")" == OPEN ]] || stop "PR #$N is not open"
 [[ "$(jq -r .baseRefName <<<"$pr")" == "$base" ]] || stop "PR #$N targets $(jq -r .baseRefName <<<"$pr"), not $base"
 [[ "$(jq -r .isCrossRepository <<<"$pr")" == false ]] || stop "PR #$N comes from a fork: integrate it by hand"
+# Someone else's PR: only with the user's yes for this PR (--author-ok <its author>).
+author=$(jq -r '.author.login // ""' <<<"$pr")
+self=$(gh api user -q .login 2>/dev/null) || stop "cannot tell which GitHub account gh uses (gh api user failed)"
+if [[ "$author" != "$self" && "$author_ok" != "$author" ]]; then
+    stop "PR #$N was opened by ${author:-an unknown account}, not by $self: ask the user before working on it, then rerun with --author-ok ${author:-LOGIN}"
+fi
 git fetch --quiet --prune origin "$base" "refs/heads/$B:refs/remotes/origin/$B" || stop "git fetch failed"
 [[ "$(git rev-parse "origin/$B")" == "$head" ]] \
     || stop "origin/$B ($(git rev-parse --short "origin/$B")) is not the PR head (${head:0:12}) yet: retry"
