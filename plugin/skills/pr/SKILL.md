@@ -26,6 +26,11 @@ the file is invalid: stop and show the user the error.
 
 ## 1. Branch
 
+This skill is for your own branch. If the branch already has an open PR that another GitHub
+account opened (`gh pr view --json author -q .author.login` differs from
+`gh api user -q .login`), stop and ask the user before you push to it, edit it or comment on
+it. Ask every time; an earlier yes does not carry over.
+
 - Never open a PR from `<base>` or `main`, and never from the main worktree: a development agent is
   started by the integrator with `/herdr-agent-pool:dispatch`, already inside a worktree of
   its own (`<type>/<short-kebab-description>`, e.g. `feat/user-login`). See "Multi-agent
