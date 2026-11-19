@@ -4,8 +4,9 @@
 # guards' role rules, claim-integrator.sh and the SessionStart hook for the coordinator and pool
 # members, agents-in-repo.py's worktree filters, pool-state.py (claim races, stale claims,
 # bounces, the merge lock, plan reports), union-rows.py, integrate-pr.sh end to end (with
-# renumber.py: numbered files renumbered at merge), and
-# integrator-pool.sh (route, scale, spawn, stop) and cleanup-worktree.sh. Part of herdr-agent-pool.
+# renumber.py: numbered files renumbered at merge; plan-tick.py: plan ticks in the merge in
+# single mode), integrator-pool.sh (route, scale, spawn, stop), cleanup-worktree.sh and
+# integrator-watch.sh (single mode's watcher). Part of herdr-agent-pool.
 #
 # Usage: tests/test-pool.sh        (exit code = number of failed cases)
 #
@@ -83,13 +84,16 @@ FAKE
 cat > "$fake/gh" <<'FAKE'
 #!/usr/bin/env bash
 # Fake gh: `pr view N [--json ...] [-q EXPR]` reads $FAKE_GH/pr-N.json, `pr list` prints
-# $FAKE_GH/list.json, `pr comment` is logged, `api user` prints the account (tester).
+# $FAKE_GH/list-<state>.json for `--state <state>` when it exists, else $FAKE_GH/list.json,
+# `pr comment` is logged, `api user` prints the account (tester).
 case "$1 $2" in
     "pr view") n=$3; shift 3; q=.
         while [[ $# -gt 0 ]]; do case "$1" in -q) q=$2; shift 2 ;; *) shift ;; esac; done
         [[ -f "$FAKE_GH/pr-$n.json" ]] || { echo "no pull requests found" >&2; exit 1; }
         jq -r "$q" "$FAKE_GH/pr-$n.json" ;;
-    "pr list") cat "$FAKE_GH/list.json" ;;
+    "pr list") state=""; while [[ $# -gt 0 ]]; do [[ "$1" == --state ]] && state=$2; shift; done
+        if [[ -n "$state" && -f "$FAKE_GH/list-$state.json" ]]; then cat "$FAKE_GH/list-$state.json"
+        else cat "$FAKE_GH/list.json"; fi ;;
     "api user") echo "${FAKE_GH_USER:-tester}" ;;
     "pr comment") echo "comment $3" >> "$FAKE_GH/log" ;;
     *) exit 2 ;;
@@ -182,7 +186,8 @@ for json in '{"integrators": {"min": 3, "max": 2}}' '{"integrators": {"max": 17}
             '{"integrators": {}, "coordinator_name": "integrator-bad-1"}' '{"coordinator_name": "Coord"}' \
             '{"integrators": {"reverify_exempt_paths": "docs/*"}}' '{"integrators": {"max_reverify": 0}}' \
             '{"integrators": {"nudge_after_minutes": -1}}' '{"numbered_files": {"adr": "docs/(a)(b)"}}' \
-            '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}'; do
+            '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}' \
+            '{"plan_ticks_in_merge": "no"}' '{"plan_ticks_in_merge": 0}'; do
     printf '%s\n' "$json" > "$bad/.claude/herdr-agent-pool.json"
     "$pc" --root "$bad" >/dev/null 2>&1; status=$?
     check "project-config: rejects $json" [ "$status" == 1 ]
@@ -190,6 +195,7 @@ done
 printf '%s\n' '{"integrators": {"locked_reverify_minutes": 0, "nudge_after_minutes": 0}}' > "$bad/.claude/herdr-agent-pool.json"
 check "project-config: 0 turns the locked re-verify and the nudges off" \
     [ "$("$pc" --root "$bad" integrators.locked_reverify_minutes)$("$pc" --root "$bad" integrators.nudge_after_minutes)" == 00 ]
+check "project-config: plan ticks in the merge by default" [ "$("$pc" --root "$work/nowhere" plan_ticks_in_merge)" == true ]
 # The template's coordinator.sh repeats the default name rule.
 mkdir -p "$work/names/Data Lab"; git init --quiet -b main "$work/names/Data Lab"
 mkdir -p "$work/names/Data Lab/scripts" && cp "$root/template/scripts/coordinator.sh" "$work/names/Data Lab/scripts/"
@@ -233,6 +239,7 @@ CLAUDE_ROLE=coordinator expect 2 "single guard: a coordinator is just a session"
 CLAUDE_ROLE=coordinator expect 2 "single edit guard: a coordinator is just a session" "$w" "$(file_op "$single/x.md")"
 CLAUDE_ROLE=integrator  expect 0 "single guard: the integrator may do everything" "$g" "$(bash_cmd 'git push origin HEAD:main && gh pr merge 3' "$single")"
 CLAUDE_ROLE=integrator  expect 0 "single edit guard: the integrator edits"     "$w" "$(file_op "$single/x.md")"
+CLAUDE_ROLE=integrator  expect 0 "single guard: the integrator runs its watcher"  "$g" "$(bash_cmd "$scripts/integrator-watch.sh" "$single")"
 expect 2 "guard: posing as an integrator with a prefix" "$g" "$(bash_cmd "CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME=integrator-proj-1 $ipr 12" "$d1")"
 expect 2 "guard: setting the member name through env"   "$g" "$(bash_cmd 'env HERDR_AGENT_POOL_NAME=integrator-proj-1 ls' "$d1")"
 expect 2 "guard: export CLAUDE_ROLE"                    "$g" "$(bash_cmd 'export CLAUDE_ROLE=coordinator' "$d1")"
@@ -263,6 +270,7 @@ expect 2 "guard: a developer claims a PR"               "$g" "$(bash_cmd "$ps cl
 expect 0 "guard: a developer reads the queue"           "$g" "$(bash_cmd "$ps queue --base main" "$d1")"
 expect 2 "guard: a developer cleans up a branch"        "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh feat/x" "$d1")"
 expect 0 "guard: a developer lists the cleanup state"   "$g" "$(bash_cmd "$scripts/cleanup-worktree.sh --list" "$d1")"
+expect 2 "guard: a developer runs the integrator watcher" "$g" "$(bash_cmd "$scripts/integrator-watch.sh once" "$d1")"
 CLAUDE_ROLE=integrator  expect 0 "guard: a pool integrator runs integrate-pr.sh" "$g" "$(bash_cmd "$ipr 12" "$wt1")"
 CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator spawns members"      "$g" "$(bash_cmd "$scripts/integrator-pool.sh spawn 2" "$wt1")"
 CLAUDE_ROLE=integrator  expect 2 "guard: a pool integrator runs the pool watcher" "$g" "$(bash_cmd "$scripts/integrator-pool.sh watch" "$wt1")"
@@ -514,6 +522,15 @@ check "integrate-pr: the claim is released"           [ -z "$(cd "$proj" && "$ps
 check "integrate-pr: a plan report waits for the coordinator" \
     [ "$(cd "$proj" && "$ps" report list | cut -f1,4 | tr '\t' ' ')" == "1 - task 1" ]
 check "integrate-pr: one verification" [ "$(runs 1)" == 1 ]
+# Pool mode ticks nothing in the merge: the coordinator ticks from the report.
+push_main docs/phases/plan.md '- [ ] T5.1 a pool task'
+make_pr 41 feat/pool-plan src/pool-plan.txt x
+jq '.body = "## Plan tasks completed\n- T5.1\n"' "$FAKE_GH/pr-41.json" > "$FAKE_GH/pr-41.new" && mv "$FAKE_GH/pr-41.new" "$FAKE_GH/pr-41.json"
+integrate 41
+check "integrate-pr: pool mode merges without ticking the plan" \
+    bash -c '[[ $1 == 0 && "$2" != *PLAN-TICKED* ]] && git -C "$3" show main:docs/phases/plan.md | grep -qxF -- "- [ ] T5.1 a pool task"' _ "$rc" "$out" "$origin"
+check "integrate-pr: pool mode reports the task to the coordinator" \
+    bash -c '[[ "$(cd "$1" && "$2" report list)" == *T5.1* ]]' _ "$proj" "$ps"
 
 # Someone else's PR (another GitHub account opened it): only with the user's yes, per PR.
 make_pr 90 feat/foreign src/foreign.txt foreign
@@ -862,6 +879,96 @@ out=$(cd "$single" && env CLAUDE_ROLE=integrator "$ipr" 1 2>&1); rc=$?
 check "integrate-pr: single mode merges in the main worktree" \
     bash -c '[[ $1 == 0 ]] && git -C "$2" cat-file -e main:s.txt && [[ "$(git -C "$3" rev-parse main)" == "$(git -C "$2" rev-parse main)" ]]' _ "$rc" "$sorigin" "$single"
 
+# Single mode ticks the PR's plan tasks inside the merge (plan-tick.py), before the check.
+sdev_main() {  # sdev_main <message>: commit what is staged in $sdev onto origin/main
+    git -C "$sdev" commit --quiet -m "$1" && git -C "$sdev" push --quiet origin HEAD:main
+}
+git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B main origin/main
+mkdir -p "$sdev/docs/phases" "$sdev/scripts"
+printf '# Phase 1\n- [ ] **T1.1 `one`**: first\n- [ ] **T1.10 `ten`**: needs T1.1\n- [ ] T1.2 two\n- [ ] T1.3 three\n' > "$sdev/docs/phases/1-core.md"
+cat > "$sdev/scripts/check.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+[[ -z "${CHECK_SEEN:-}" ]] || cat docs/phases/*.md > "$CHECK_SEEN"
+[[ -z "${CHECK_COUNT:-}" ]] || echo run >> "$CHECK_COUNT"
+if [[ -n "${CHECK_HOOK:-}" && ! -e "$CHECK_HOOK.done" ]]; then touch "$CHECK_HOOK.done"; "$CHECK_HOOK"; fi
+echo "checks ok"
+SH
+chmod +x "$sdev/scripts/check.sh"; git -C "$sdev" add -A && sdev_main "plan and check"
+spr() {  # spr <N> <branch> <plan section>: a PR from $sdev whose body lists plan tasks
+    git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B "$2" origin/main
+    echo "$1" > "$sdev/s$1.txt" && git -C "$sdev" add -A && git -C "$sdev" commit --quiet -m "s$1" && git -C "$sdev" push --quiet origin "$2"
+    jq -n --argjson n "$1" --arg b "$2" --arg h "$(git -C "$sorigin" rev-parse "refs/heads/$2")" --arg t "$3" \
+        '{number: $n, title: "s\($n)", headRefName: $b, headRefOid: $h, baseRefName: "main", state: "OPEN",
+          isCrossRepository: false, author: {login: "tester"},
+          body: "## Summary\nT1.3\n\n## Plan tasks completed\n\($t)\n\n## Docs\nT1.2\n"}' > "$FAKE_GH/pr-$1.json"
+}
+sint() {  # sint <N>: integrate-pr.sh in the single main worktree; sets out, rc
+    export CHECK_SEEN="$work/seen-$1" CHECK_COUNT="$work/count-$1"; : > "$CHECK_COUNT"
+    out=$(cd "$single" && env CLAUDE_ROLE=integrator "$ipr" "$1" 2>&1); rc=$?
+    unset CHECK_SEEN CHECK_COUNT CHECK_HOOK
+}
+splan() { git -C "$sorigin" show main:docs/phases/1-core.md; }
+spr 61 feat/s61 '- `docs/phases/1-core.md`: T1.1 and T9.9'
+sint 61
+check "plan ticks: the listed task is ticked in the merge (PLAN-TICKED)" \
+    bash -c '[[ $1 == 0 && "$2" == *"PLAN-TICKED T1.1 docs/phases/1-core.md"* ]] && grep -qF -- "- [x] **T1.1" <<<"$3"' _ "$rc" "$out" "$(splan)"
+check "plan ticks: T1.10 and the ids outside the section stay open" \
+    bash -c 'grep -qF -- "- [ ] **T1.10" <<<"$1" && grep -qxF -- "- [ ] T1.2 two" <<<"$1" && grep -qxF -- "- [ ] T1.3 three" <<<"$1"' _ "$(splan)"
+check "plan ticks: an id it cannot find is reported (PLAN-UNTICKED)" \
+    bash -c '[[ "$1" == *"PLAN-UNTICKED T9.9 (no such task in docs/phases)"* ]]' _ "$out"
+check "plan ticks: the verification ran on the ticked tree" grep -qF -- "- [x] **T1.1" "$work/seen-61"
+check "plan ticks: one merge commit carries the tick and says so" \
+    bash -c '[[ "$(git -C "$1" log -1 --format=%P main | wc -w | tr -d " ")" == 2 ]] && git -C "$1" log -1 --format=%B main | grep -qx "PLAN-TICKED T1.1 docs/phases/1-core.md" \
+             && [[ -n "$(git -C "$1" diff main^1 main -- docs/phases/1-core.md)" ]]' _ "$sorigin"
+check "plan ticks: the main worktree is clean afterwards" [ -z "$(git -C "$single" status --porcelain)" ]
+spr 62 feat/s62 '- T1.1'
+sint 62
+check "plan ticks: an already ticked task is reported, not ticked twice" \
+    bash -c '[[ $1 == 0 && "$2" == *"PLAN-UNTICKED T1.1 (already ticked)"* && "$2" != *PLAN-TICKED* ]]' _ "$rc" "$out"
+# The base moves during the verification (a plan edit, an exempt path): re-merged, ticked again.
+spr 63 feat/s63 '- T1.2'
+cat > "$work/hook-splan.sh" <<HOOK
+#!/usr/bin/env bash
+git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B main origin/main
+echo '- [ ] T1.4 four' >> "$sdev/docs/phases/1-core.md"
+git -C "$sdev" add -A && git -C "$sdev" commit --quiet -m "plan: T1.4" && git -C "$sdev" push --quiet origin HEAD:main
+HOOK
+chmod +x "$work/hook-splan.sh"; export CHECK_HOOK="$work/hook-splan.sh"
+sint 63
+check "plan ticks: a re-merge onto a moved base ticks again" \
+    bash -c '[[ $1 == 0 && "$2" == *"moved during the verification"* ]] && grep -qxF -- "- [x] T1.2 two" <<<"$3" && grep -qxF -- "- [ ] T1.4 four" <<<"$3" \
+             && git -C "$4" log -1 --format=%B main | grep -qx "PLAN-TICKED T1.2 docs/phases/1-core.md"' _ "$rc" "$out" "$(splan)" "$sorigin"
+git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B main origin/main
+echo '{"plan_ticks_in_merge": false}' > "$sdev/.claude/herdr-agent-pool.json"; git -C "$sdev" add -A && sdev_main "plan ticks off"
+git -C "$single" fetch --quiet origin && git -C "$single" merge --quiet --ff-only origin/main   # the settings are read from the worktree
+spr 64 feat/s64 '- T1.3'
+sint 64
+check "plan ticks: plan_ticks_in_merge false leaves the plan alone" \
+    bash -c '[[ $1 == 0 && "$2" != *PLAN-* ]] && grep -qxF -- "- [ ] T1.3 three" <<<"$3"' _ "$rc" "$out" "$(splan)"
+git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B main origin/main
+git -C "$sdev" rm --quiet .claude/herdr-agent-pool.json && sdev_main "plan ticks on"
+git -C "$single" fetch --quiet origin && git -C "$single" merge --quiet --ff-only origin/main
+
+# plan-tick.py alone: whole tokens, leading ids, ambiguity.
+ptick="$scripts/plan-tick.py"; ptd="$work/plan-tick"; mkdir -p "$ptd/docs/phases"
+printf '%s\n' '- [ ] **T1.10 `ten`**: needs T1.1 and T1.1.2' '- [ ] T1.1.2 sub' '  - [ ] note: see T3.1' \
+    '- [ ] T2.1 a' '- [ ] T2.1 b' '- [x] T4.1 done' > "$ptd/docs/phases/p.md"
+ptout=$(cd "$ptd" && printf '## Plan tasks completed\nT1.1, `T1.1.2`, T2.1, T3.1, T4.1\n## Docs\nT1.10\n' | "$ptick"); ptrc=$?
+check "plan-tick: T1.1 is not ticked in a line that leads with T1.10 (only mentions it there)" \
+    bash -c '[[ "$1" == *"PLAN-UNTICKED T1.1 "* ]] && grep -qF -- "- [ ] **T1.10" "$2"' _ "$ptout" "$ptd/docs/phases/p.md"
+check "plan-tick: T1.1.2 ticks its own line, not the one that mentions it" \
+    bash -c '[[ $1 == 0 && "$2" == *"PLAN-TICKED T1.1.2 "* ]] && grep -qxF -- "- [x] T1.1.2 sub" "$3"' _ "$ptrc" "$ptout" "$ptd/docs/phases/p.md"
+check "plan-tick: an id mentioned by one open task only ticks it (indented too)" \
+    grep -qxF -- "  - [x] note: see T3.1" "$ptd/docs/phases/p.md"
+check "plan-tick: two open tasks with one id are ambiguous: neither is ticked" \
+    bash -c '[[ "$1" == *"PLAN-UNTICKED T2.1 (ambiguous"* ]] && [[ $(grep -c -- "- \[ \] T2.1" "$2") == 2 ]]' _ "$ptout" "$ptd/docs/phases/p.md"
+check "plan-tick: ids outside the section are ignored" bash -c '[[ "$1" != *T1.10* ]]' _ "$ptout"
+check "plan-tick: a ticked task is reported as such" bash -c '[[ "$1" == *"PLAN-UNTICKED T4.1 (already ticked)"* ]]' _ "$ptout"
+check "plan-tick: no section, no output and nothing changed" \
+    bash -c 'before=$(cat "$2"); out=$(cd "$1" && printf "## Summary\nT2.1\n" | "$3"); [[ $? == 0 && -z "$out" && "$(cat "$2")" == "$before" ]]' _ "$ptd" "$ptd/docs/phases/p.md" "$ptick"
+
 # resource-budget.py (the hard floor) and resource-board.sh (the negotiated sheet) -------------
 rb="$scripts/resource-budget.py"; board="$scripts/resource-board.sh"
 order="$work/heavy-order"; : > "$order"
@@ -1144,6 +1251,86 @@ check "cleanup: refuses a protected branch (exit 1)" exits 1 cwi main
 check "cleanup: refuses a Claude session that is not the dispatcher (exit 1)" \
     exits 1 env CLAUDECODE=1 CLAUDE_ROLE= bash -c 'cd "$1" && "$2" --list' _ "$proj" "$cw"
 unset FAKE_PANES; echo '[]' > "$FAKE_GH/list.json"
+
+# integrator-watch.sh: single mode's watcher wakes the idle integrator and cleans up -----------
+iw="$scripts/integrator-watch.sh"
+sst="$(git -C "$single" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool"
+wpass() { (cd "$single" && env HERDR_ENV=1 HERDR_AGENT_POOL_CLEAN_GRACE=0 "$iw" once 2>&1); }
+prompts() { grep -c "^prompt integrator-single \[herdr message from the integrator watcher" "$FAKE_LOG"; }
+open_list() {  # open_list <N:head[:label]> ...: the fake open PRs
+    local json='[]' n h l
+    for item in "$@"; do
+        IFS=: read -r n h l <<<"$item"
+        json=$(jq -c --argjson n "$n" --arg h "$h" --arg l "$l" \
+            '. + [{number: $n, headRefOid: $h, isDraft: false, labels: (if $l == "" then [] else [{name: $l}] end)}]' <<<"$json")
+    done
+    printf '%s\n' "$json" > "$FAKE_GH/list-open.json"
+}
+echo '[]' > "$FAKE_GH/list-merged.json"
+check "watch: refuses pool mode (exit 1)" exits 1 bash -c 'cd "$1" && HERDR_ENV=1 "$2" once' _ "$proj" "$iw"
+agents integrator-single w1:p1 idle "$single"
+open_list 50:h50a
+: > "$FAKE_LOG"; out=$(wpass)
+check "watch: a PR first seen is not news yet (an announcement may be on its way)" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(prompts)"
+out=$(wpass)
+check "watch: an undecided PR wakes the idle integrator" \
+    bash -c '[[ "$1" == *"woke integrator-single: PR #50 waits for a verdict"* && $2 == 1 ]]' _ "$out" "$(prompts)"
+out=$(wpass)
+check "watch: the same news is never told twice" bash -c '[[ -z "$1" && $2 == 1 ]]' _ "$out" "$(prompts)"
+open_list 50:h50b; wpass >/dev/null; out=$(wpass)
+check "watch: a new head is news again" bash -c '[[ "$1" == *"PR #50 waits"* && $2 == 2 ]]' _ "$out" "$(prompts)"
+agents integrator-single w1:p1 working "$single"
+open_list 50:h50b 51:h51; wpass >/dev/null; out=$(wpass)
+check "watch: a working integrator is not prompted" bash -c '[[ -z "$1" && $2 == 2 ]]' _ "$out" "$(prompts)"
+agents integrator-single w1:p1 blocked "$single"; out=$(wpass)
+check "watch: a blocked integrator is not prompted" bash -c '[[ -z "$1" && $2 == 2 ]]' _ "$out" "$(prompts)"
+agents integrator-single w1:p1 "done" "$single"; out=$(wpass)
+check "watch: the news waited and is told once the integrator is done" \
+    bash -c '[[ "$1" == *"PR #51 waits"* && "$1" != *"PR #50"* && $2 == 3 ]]' _ "$out" "$(prompts)"
+mkdir -p "$sst/bounced" && echo '{"head": "h52"}' > "$sst/bounced/pr-52.json"
+open_list 50:h50b 51:h51 52:h52 53:h53:queue 54:h54:queue 55:h55:draft
+jq '.[5].isDraft = true' "$FAKE_GH/list-open.json" > "$FAKE_GH/l.new" && mv "$FAKE_GH/l.new" "$FAKE_GH/list-open.json"
+wpass >/dev/null; out=$(wpass)
+check "watch: bounced heads, queued and draft PRs are no news" bash -c '[[ -z "$1" && $2 == 3 ]]' _ "$out" "$(prompts)"
+# The lander merges #53 and bounces #54 out of the queue.
+open_list 50:h50b 51:h51 52:h52 54:h54
+jq -n '{number: 53, state: "MERGED", comments: []}' > "$FAKE_GH/pr-53.json"
+jq -n '{number: 54, state: "OPEN", comments: [{body: "Looks good."}, {body: "<!-- herdr-agent-pool:lander bounce -->\n\nLander bounce 1 of 2: merge conflict onto `main`."}]}' > "$FAKE_GH/pr-54.json"
+out=$(wpass)
+check "watch: the lander's merge and bounce wake the integrator, in one message" \
+    bash -c '[[ "$1" == *"PR #53 merged"*"PR #54 left the queue: Lander bounce 1 of 2: merge conflict"* && $2 == 4 ]]' _ "$out" "$(prompts)"
+out=$(wpass); out2=$(wpass)
+check "watch: lander news is told once (the bounced PR then waits like any other)" \
+    bash -c '[[ "$1$2" != *"PR #53"* && "$1$2" != *"left the queue"* ]]' _ "$out" "$out2"
+open_list
+# Cleanup: a ready worktree goes, a dirty one stays.
+for b in w-done w-dirty; do
+    git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B "feat/$b" origin/main
+    echo "$b" > "$sdev/$b.txt" && git -C "$sdev" add -A && git -C "$sdev" commit --quiet -m "$b" && git -C "$sdev" push --quiet origin "feat/$b"
+    git -C "$sdev" checkout --quiet -B main origin/main && git -C "$sdev" merge --quiet --no-ff -m "Merge feat/$b" "feat/$b" \
+        && git -C "$sdev" push --quiet origin main
+    git -C "$single" fetch --quiet origin && git -C "$single" branch --quiet "feat/$b" "origin/feat/$b"
+    git -C "$single" worktree add --quiet "$work/single-$b" "feat/$b"
+done
+git -C "$single" merge --quiet --ff-only origin/main
+echo scratch > "$work/single-w-dirty/notes.txt"
+jq -n --arg a "$(git -C "$single" rev-parse feat/w-done)" --arg b "$(git -C "$single" rev-parse feat/w-dirty)" \
+    '[{headRefName: "feat/w-done", headRefOid: $a}, {headRefName: "feat/w-dirty", headRefOid: $b}]' > "$FAKE_GH/list-merged.json"
+agents integrator-single w1:p1 working "$single"  wdone w8:p1 idle "$work/single-w-done"  wdirty w9:p1 idle "$work/single-w-dirty"
+export FAKE_PANES="$work/panes.json"; panes w8 w8:p1 "$work/single-w-done"  w9 w9:p1 "$work/single-w-dirty"
+: > "$FAKE_LOG"; out=$(wpass)
+check "watch: a worktree just ready is left for a grace period" bash -c '[[ -z "$1" && -d "$2" ]]' _ "$out" "$work/single-w-done"
+out=$(wpass)
+check "watch: cleans up the ready worktree (cleanup-worktree.sh)" \
+    bash -c '[[ "$1" == *"cleaned feat/w-done"* && ! -d "$2" ]] && grep -q "workspace-close w8" "$3"' _ "$out" "$work/single-w-done" "$FAKE_LOG"
+check "watch: leaves the dirty one alone" \
+    bash -c '[[ "$1" != *w-dirty* && -f "$2/notes.txt" ]] && ! grep -q "workspace-close w9" "$3"' _ "$out" "$work/single-w-dirty" "$FAKE_LOG"
+(cd "$single" && exec env HERDR_ENV=1 "$iw" 10 > "$work/iwatch.out" 2>&1) & iwatcher=$!
+until_true test -s "$sst/integrator-watch.pid"
+out=$(cd "$single" && env HERDR_ENV=1 "$iw" 10 2>&1); status=$?
+check "watch: a second watcher exits 0 at once" bash -c '[[ $1 == 0 && "$2" == *"already runs"* ]]' _ "$status" "$out"
+kill "$(cat "$sst/integrator-watch.pid")" 2>/dev/null; wait "$iwatcher" 2>/dev/null
+unset FAKE_PANES; rm -f "$FAKE_GH/list-open.json" "$FAKE_GH/list-merged.json"
 
 echo
 echo "$fails failure(s)"

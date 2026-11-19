@@ -312,7 +312,7 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | `git push --all/--mirror`, `gh pr merge` | blocked | blocked | blocked | allowed |
 | `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
 | `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
-| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>` | blocked | blocked | allowed | allowed |
+| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>`, `integrator-watch.sh` (single mode only) | blocked | blocked | allowed | allowed |
 | Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
@@ -541,7 +541,7 @@ So: sessions ≈ RAM / 2 and heavy slots ≈ (RAM − 8) / 8. Measure the projec
 A worktree whose branch was merged has done its job. Left behind, it keeps a Claude session,
 that session's memory and its installed dependencies alive, and the branch list only grows.
 So the one who dispatched the agent discards it after the merge: the integrator in single
-mode, the coordinator in pool mode. That is the one who opened the workspace, so it may
+mode (through its watcher, `integrator-watch.sh`), the coordinator in pool mode. That is the one who opened the workspace, so it may
 close it. The flow:
 
 1. The merged verdict tells the author its task is done: report to the user in one line,

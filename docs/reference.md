@@ -87,6 +87,7 @@ per-repository default applies):
 | `verify` | every field empty | merge verifications: `check_env` (variables for `scripts/check.sh`, e.g. a fast lane), `docs_only_paths` and `docs_only_env` (added when every changed path matches) |
 | `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`), `locked_reverify_minutes` (60; 0 off), `nudge_after_minutes` (5; 0 off); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](multi-integrator.md)) |
 | `numbered_files` | `{}` | numbered files such as migrations and ADRs, `{kind: regex}` with one group for the number (e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md"}`); authors take the next free number on their base, and `integrate-pr.sh` renumbers a PR's new files at merge when another branch took that number (file, index row, links; a `RENUMBERED` line each), before the verification |
+| `plan_ticks_in_merge` | `true` | single mode: `integrate-pr.sh` ticks the tasks the PR body lists by id (`T1.2`) under "Plan tasks completed" in `docs/phases/*.md` inside the merge commit, before the verification (`plan-tick.py`; a `PLAN-TICKED` or `PLAN-UNTICKED` line each); `false` leaves the ticks to the integrator. Pool mode ignores it |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
 (`project-config.py base_branch`, `project-config.py integrators.max`) or all of them as JSON
@@ -125,8 +126,13 @@ things for it:
 - `verify-merge.sh`, `new-worktree.sh` and the `commit`/`pr` skills run the project's heavy
   scripts through `resource-budget.py`. They may wait for a free heavy (or light) slot, and an invalid
   `~/.config/herdr-agent-pool/resources.json` makes them fail.
-- `integrate` merges with `integrate-pr.sh`, and after a merge it cleans up the author's
-  worktree with `cleanup-worktree.sh`.
+- `integrate` merges with `integrate-pr.sh`, which also ticks the PR's plan tasks in the merge
+  commit (`plan_ticks_in_merge`).
+- `integrate` starts `integrator-watch.sh` in the background: without tokens, every minute it
+  cleans up the merged worktrees whose author is idle (`cleanup-worktree.sh`) and wakes the
+  idle integrator, once per item, about PRs that wait for a verdict and PRs the lander merged
+  or took out of the queue (decision
+  [0010](decisions/0010-slim-integrator.md)).
 - An invalid `.claude/herdr-agent-pool.json` now blocks the integrator too (fail closed),
   except for editing that file.
 
@@ -243,7 +249,7 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Skill | `dispatch` | Integrator only: `new-worktree.sh`, then `herdr worktree open` (fallback `workspace create`) as its own workspace, `herdr agent start <name> --kind claude`, and the brief |
 | Skill | `commit` | Conventional Commits in English, runs `scripts/check.sh` first, never stages secrets |
 | Skill | `pr` | Rebases, checks, opens the PR with a structured body, announces it to the project's integrator herdr agent (`integrator_name`) |
-| Skill | `integrate` | Integrator loop (both modes): queue (`pool-state.py queue`) -> claim (pool) -> review -> `integrate-pr.sh` -> plan (single) or merge report to the coordinator (pool) -> verdict to the author's herdr agent |
+| Skill | `integrate` | Integrator loop (both modes): queue (`pool-state.py queue`) -> claim (pool) -> review -> `integrate-pr.sh` (single mode: the plan ticks are in the merge) -> merge report to the coordinator (pool) -> verdict to the author's herdr agent; single mode starts `integrator-watch.sh` |
 | Skill | `coordinate` | Pool mode, coordinator only: arbitrate resources (board, requests, save mode), scale the pool by asking its members, tick the plan from merge reports and push it under the merge lock, answer development agents, escalate blocked ones |
 | Skill | `document` | Brings docstrings, `docs/`, ADRs and `CLAUDE.md` up to date |
 | Skill | `issue` | Any role: writes a GitHub issue for work left for later (evidence, acceptance criteria, scope, risk, size, `Depends on`), after a duplicate search, and links it from the code (`TODO(#N)`), the docs and the PR |
@@ -267,6 +273,8 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Script | `land.py` | The lander of the GitHub Actions design (phase 1): drains the PRs labelled `queue` in a workflow, checks CI, approvals, `risk:high` and `base-red`, verifies each merge and pushes it; conflicts and red checks bounce, counted up to `needs-human` ([docs/lander.md](lander.md)) |
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys, except numbers being renumbered) |
 | Script | `renumber.py` | Run by `integrate-pr.sh` on each merge: moves the PR's new numbered files (`numbered_files`) to the next free numbers on the base and rewrites their names in the PR's files |
+| Script | `plan-tick.py` | Run by `integrate-pr.sh` on each merge in single mode: ticks the task ids the PR body lists under "Plan tasks completed" in `docs/phases/*.md` (a whole-token id that starts one open task line, or the only open line mentioning it); reports ids it cannot tick |
+| Script | `integrator-watch.sh` | Single mode's watcher, token-free (`integrate` starts it): every minute cleans up the `ready` worktrees and wakes the integrator, only when idle or done, with what changed (PRs waiting for a verdict, the lander's merges and unqueues), each item once; `once` runs one pass |
 
 Each skill's `SKILL.md` holds the normal path only: preconditions, the steps with their
 commands, and the "Never" rules. Rare branches and message templates live beside it in

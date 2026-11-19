@@ -69,7 +69,7 @@ through the integrator.
 - **Ask before working on someone else's PR** (opened by another GitHub account than `gh`'s):
   read-only until the user says yes, every time, for that PR and step only.
 - **`docs/phases/` belongs to the integrator** (pool mode: the coordinator). List completed
-  tasks under "Plan tasks completed" in the PR body instead of ticking them.
+  tasks by id (`T1.2`) under "Plan tasks completed" in the PR body instead of ticking them.
 - **Pool mode** (an `integrators` object in the settings; the plugin's
   `docs/multi-integrator.md`). The main worktree belongs to the **coordinator**
   (`scripts/coordinator.sh`, herdr name `coordinator_name`): the user talks to it; it
