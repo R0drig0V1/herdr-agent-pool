@@ -203,6 +203,50 @@ else
     echo "FAIL  notify: non-zero exit"; fails=$((fails + 1))
 fi
 
+# install.sh also drives the claude and herdr CLIs. The tests never reach the real ones: fakes
+# come first on PATH for the rest of the file, with their state in files under $ibin/state
+# (installed: the `plugin list --json` answer once the plugin is installed, the default entry
+# when empty; markets: the `plugin marketplace list --json` answer, [] when absent;
+# install-exit: exit code of `plugin install`; integration: the `claude:` line of
+# `herdr integration status`; log: every mutating call).
+ibin="$work/install-bin"; ist="$ibin/state"; mkdir -p "$ist"
+cat > "$ibin/claude" <<'FAKE'
+#!/usr/bin/env bash
+st="$(dirname "$0")/state"
+case "$*" in
+    "plugin list --json")
+        if [[ -s "$st/installed" ]]; then cat "$st/installed"
+        elif [[ -e "$st/installed" ]]; then echo '[{"id":"herdr-agent-pool@herdr-agent-pool","scope":"project"}]'
+        else echo '[]'; fi ;;
+    "plugin marketplace list --json") cat "$st/markets" 2>/dev/null || echo '[]' ;;
+    "plugin marketplace add "*) echo "$*" >> "$st/log" ;;
+    "plugin marketplace remove "*) echo "$*" >> "$st/log"; echo '[]' > "$st/markets" ;;
+    "plugin install "*)
+        echo "$*" >> "$st/log"
+        code=$(cat "$st/install-exit" 2>/dev/null || echo 0)
+        if [[ "$code" == 0 ]]; then : > "$st/installed"; else echo "fake refusal" >&2; fi
+        exit "$code" ;;
+    *) exit 64 ;;
+esac
+FAKE
+cat > "$ibin/herdr" <<'FAKE'
+#!/usr/bin/env bash
+st="$(dirname "$0")/state"
+case "$*" in
+    --version) echo "herdr 0.9.5" ;;
+    "integration status") echo "pi: not installed (x)"; cat "$st/integration" 2>/dev/null || echo "claude: current (v11) (x)" ;;
+    "integration install claude") echo "$*" >> "$st/log"; echo "claude: current (v11) (x)" > "$st/integration" ;;
+    *) exit 64 ;;
+esac
+FAKE
+chmod +x "$ibin/claude" "$ibin/herdr"
+PATH="$ibin:$PATH"
+ireset() { rm -f "$ist"/*; }
+check() {  # check <name> <condition exit status> [<detail on failure>]
+    if [[ "$2" == 0 ]]; then echo "ok    install: $1"
+    else echo "FAIL  install: $1${3:+: $3}"; fails=$((fails + 1)); fi
+}
+
 target="$work/target"
 new_repo "$target" no
 (cd "$target" && bash "$root/install.sh" >/dev/null) || { echo "FAIL  install: exit $?"; fails=$((fails + 1)); }
@@ -300,6 +344,121 @@ else
     echo "FAIL  install: invalid settings.json (exit $status, CLAUDE.md $([[ -e "$bad/CLAUDE.md" ]] && echo written || echo absent))"
     fails=$((fails + 1))
 fi
+# The plugin through the claude CLI: installed once, reported, never fatal.
+plugin_id="herdr-agent-pool@herdr-agent-pool"
+ireset
+pl="$work/plugin-cli"; new_repo "$pl" no
+out=$(cd "$pl" && bash "$root/install.sh")
+grep -qF "installed (project scope)" <<<"$out" \
+    && grep -qxF "plugin install $plugin_id --scope project" "$ist/log" \
+    && grep -qxF "plugin marketplace add R0drig0V1/herdr-agent-pool" "$ist/log" \
+    && ! grep -qF "claude plugin install" <<<"$out" && ! grep -qF "herdr-agent-pool:setup once" <<<"$out"
+check "installs the plugin with the claude CLI" $? "$out"
+out=$(cd "$pl" && bash "$root/install.sh")
+grep -qF "already installed" <<<"$out" && [[ $(grep -c "^plugin install" "$ist/log") == 1 ]]
+check "second run does not install the plugin again" $? "$out"
+ireset
+out=$(cd "$pl" && bash "$root/install.sh" --no-plugin)
+grep -qF "skipped (--no-plugin)" <<<"$out" && grep -qF "claude plugin install" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "--no-plugin skips the CLI and prints the commands" $? "$out"
+out=$(cd "$pl" && bash "$root/install.sh" --dry-run)
+grep -qF "would be installed" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "--dry-run does not call the claude CLI" $? "$out"
+echo 1 > "$ist/install-exit"
+out=$(cd "$pl" && bash "$root/install.sh"); status=$?
+[[ $status == 0 ]] && grep -qF "NOT installed: the claude CLI refused (fake refusal)" <<<"$out" \
+    && grep -qF "claude plugin install" <<<"$out"
+check "a refused plugin install is reported with the CLI's reason, not fatal" $? "exit $status: $out"
+# Installed for another repository only (project scope): this one still needs its install.
+ireset
+printf '[{"id":"%s","scope":"project","projectPath":"/somewhere/else"}]\n' "$plugin_id" > "$ist/installed"
+out=$(cd "$pl" && bash "$root/install.sh")
+grep -qF "installed (project scope)" <<<"$out" && grep -qxF "plugin install $plugin_id --scope project" "$ist/log"
+check "a project-scope install of another repository does not count" $? "$out"
+ireset
+printf '[{"id":"%s","scope":"user"}]\n' "$plugin_id" > "$ist/installed"
+out=$(cd "$pl" && bash "$root/install.sh")
+grep -qF "already installed" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "a user-scope install counts as installed" $? "$out"
+# The marketplace already registered under its name (a local clone, for example): not added again.
+ireset
+echo '[{"name":"herdr-agent-pool","source":"directory","path":"/a/clone"}]' > "$ist/markets"
+out=$(cd "$pl" && bash "$root/install.sh")
+grep -qF "installed (project scope)" <<<"$out" && ! grep -q "^plugin marketplace" "$ist/log"
+check "a marketplace already registered by name is not added again" $? "$out"
+
+# This repository known to the machine as a marketplace with another name: the CLI would say
+# "already on disk" and then not find the plugin. Removed only on a yes; the commands otherwise.
+stale_markets='[{"name":"old-name","source":"github","repo":"r0drig0v1/Herdr-Agent-Pool"},
+                {"name":"other","source":"github","repo":"someone/other"}]'
+ireset; echo "$stale_markets" > "$ist/markets"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY=/dev/null bash "$root/install.sh" 2>/dev/null)
+grep -qF 'NOT installed: this machine knows R0drig0V1/herdr-agent-pool as marketplace "old-name"' <<<"$out" \
+    && grep -qF "claude plugin marketplace remove old-name" <<<"$out" \
+    && grep -qF "claude plugin marketplace add R0drig0V1/herdr-agent-pool" <<<"$out" \
+    && ! grep -qF "remove other" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "marketplace under another name, no answer: commands printed, nothing run" $? "$out"
+echo n > "$work/answer"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY="$work/answer" bash "$root/install.sh" 2>/dev/null)
+grep -qF "claude plugin marketplace remove old-name" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "marketplace under another name, answer no: nothing run" $? "$out"
+echo y > "$work/answer"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY="$work/answer" bash "$root/install.sh" --dry-run 2>/dev/null)
+grep -qF "claude plugin marketplace remove old-name" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "marketplace under another name, --dry-run: not asked" $? "$out"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY="$work/answer" bash "$root/install.sh" 2>/dev/null)
+grep -qF "installed (project scope)" <<<"$out" \
+    && [[ "$(tr '\n' '|' < "$ist/log")" == "plugin marketplace remove old-name|plugin marketplace add R0drig0V1/herdr-agent-pool|plugin install $plugin_id --scope project|" ]] \
+    && ! grep -qF "claude plugin marketplace" <<<"$out"
+check "marketplace under another name, answer yes: removed, added, installed" $? "$out / $(cat "$ist/log")"
+ireset; echo '[{"name":"old-name","source":"git","url":"https://github.com/R0drig0V1/herdr-agent-pool.git"}]' > "$ist/markets"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY=/dev/null bash "$root/install.sh" 2>/dev/null)
+grep -qF "claude plugin marketplace remove old-name" <<<"$out"
+check "marketplace under another name, declared by URL" $? "$out"
+
+# herdr's Claude integration: asked on the terminal, installed only on yes.
+ireset; : > "$ist/installed"
+echo "claude: not installed (x)" > "$ist/integration"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY=/dev/null bash "$root/install.sh" 2>/dev/null)
+grep -qF "Run: herdr integration install claude" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "integration missing, no answer: command printed" $? "$out"
+echo n > "$work/answer"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY="$work/answer" bash "$root/install.sh" 2>/dev/null)
+grep -qF "Run: herdr integration install claude" <<<"$out" && [[ ! -e "$ist/log" ]]
+check "integration missing, answer no: not installed" $? "$out"
+echo y > "$work/answer"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY="$work/answer" bash "$root/install.sh" --dry-run 2>/dev/null)
+asked=0; [[ -e "$ist/log" ]] && asked=1
+check "integration missing, --dry-run: not asked" $asked "$out"
+out=$(cd "$pl" && HERDR_AGENT_POOL_TTY="$work/answer" bash "$root/install.sh" 2>/dev/null)
+grep -qF -- "-> installed" <<<"$out" && grep -qxF "integration install claude" "$ist/log" \
+    && ! grep -qF "Run: herdr integration" <<<"$out"
+check "integration missing, answer yes: installed" $? "$out"
+# No herdr and no claude on PATH: reported, with the steps.
+ireset
+out=$(cd "$pl" && PATH=/usr/bin:/bin bash "$root/install.sh")
+grep -qF "herdr: NOT installed" <<<"$out" && grep -qF "Install herdr" <<<"$out" \
+    && grep -qF "claude is not on PATH" <<<"$out"
+check "no herdr and no claude: reported with next steps" $? "$out"
+ireset; : > "$ist/installed"
+
+# Never through a symbolic link or outside the repository.
+ln="$work/links"; new_repo "$ln" no
+mkdir -p "$work/outside"
+ln -s "$work/outside/CLAUDE.md" "$ln/CLAUDE.md"
+ln -s "$work/outside" "$ln/scripts"
+out=$(cd "$ln" && bash "$root/install.sh")
+[[ -z "$(ls -A "$work/outside")" ]] && grep -qF "! CLAUDE.md: NOT written" <<<"$out" \
+    && grep -qF "! scripts/check.sh: NOT written" <<<"$out" && [[ -f "$ln/.claude/settings.json" ]]
+check "refuses to write through symbolic links" $? "$(ls -A "$work/outside") / $out"
+arr="$work/array-settings"; new_repo "$arr" no
+printf '[]\n' > "$arr/.claude/settings.json"
+(cd "$arr" && bash "$root/install.sh" >/dev/null 2>&1); status=$?
+stopped=1; [[ $status == 1 && ! -e "$arr/CLAUDE.md" ]] && stopped=0
+check "settings.json that is not an object stops before copying" $stopped "exit $status"
+out=$(bash "$root/install.sh" --help)
+grep -qF "Needs git and bash" <<<"$out" && grep -qF -- "--no-plugin" <<<"$out" && ! grep -q '^#' <<<"$out"
+check "--help prints the whole header" $? "$out"
 sp="$work/with space/repo"
 mkdir -p "$work/with space"
 new_repo "$sp" no
