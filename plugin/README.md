@@ -145,7 +145,6 @@ flowchart LR
   D -- "questions, RESOURCE REQUEST" --> C
   C -- "RESOURCE GO / WAIT / YIELD, SAVE MODE" --> D
   C -- "RESOURCE GO / WAIT" --> I
-  I -- "base moved: rebase" --> O[Other development agents]
   W[["pool watcher (no tokens)"]] -- "nudge: unclaimed PRs" --> I
   W -- "told once after 3 nudges" --> C
 ```

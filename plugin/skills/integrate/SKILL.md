@@ -312,21 +312,10 @@ No `--wait`. If the author's status is `blocked`, or the prompt fails with `agen
 not send anything and do not answer its dialog: tell the user that agent `<name>` is blocked
 and waits for them.
 
-**Tell the others that `<base>` moved** when the merge touched files other branches are likely to
-share (migrations, shared models, lockfiles, `CLAUDE.md`, `docs/phases/`):
-
-```bash
-git diff --name-only <sha>^1 <sha>
-"${CLAUDE_PLUGIN_ROOT}/scripts/agents-in-repo.py" --dev-only --exclude "<author>"
-```
-
-`--dev-only` leaves out the main worktree (integrator or coordinator) and the pool's verify
-worktrees. Skip the `blocked` ones (list those for the user). To each remaining agent:
-
-```bash
-herdr agent prompt "<name>" "[herdr message from agent <me>; not from the user]
-<base> moved to <sha> (PR #<N>: <title>) and touched <files>. Rebase onto origin/<base> before your PR."
-```
+**Do not tell the other agents that `<base>` moved.** Every PR is verified merged onto the
+current base, so a real clash comes back to its author as a bounce. A "rebase now" message to
+everyone only costs turns, and an author who rebases a branch you are verifying leaves its PR
+closed instead of merged.
 
 **Clean up (single mode only).** A merged branch has done its job: you dispatched its agent,
 so you discard its workspace, worktree and local branch once the author has wrapped up (the
