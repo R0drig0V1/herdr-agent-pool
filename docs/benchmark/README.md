@@ -87,6 +87,7 @@ All on 2026-11-19, the same seed, Opus 5.5 with effort high, at most 5 developme
 | 2 | decisions 0002-0003; plan reviewed first (+11.5 min, not in the wall time) | **17.9** | 12.4 | **0.9 / 2.2** | **3** | **3** | 54 | **83** | **1.25 M** | 40.6 M |
 | 3 | run 2 plus the lander in Actions (decision 0005), reviewed plan | 62.5 | 39.4 | 5.1 / 24.1 | 4 | 9 | 61 | 139 | 1.54 M | 56.5 M |
 | 4 | the two-level plugin claude-code-herdr (4f9ded4), reviewed plan | 36.0 (about 23 without a 13-min machine sleep) | 41.1 | 3.0 / 13.3 | 7 | 12 | 40 | 87 | 1.45 M | **39.3 M** |
+| 5 | `main` after decisions 0006-0008 plus 0009 (PR #11), reviewed plan | 27.7 | 29.4 | 3.4 / 12.7 | 9 | 9 | 39 | 103 | 1.36 M | 43.5 M |
 
 Notes per run:
 
@@ -105,6 +106,12 @@ Notes per run:
 - **Run 4.** The machine slept at 11:07; the integrator stood still about 13 minutes until the
   user asked it to resend. The two-level plugin left its 17 development sessions open after
   their merges (no cleanup), which inflates its agent-minutes.
+- **Run 5.** No question to the user and no stop: the guideline (0008) did not block the start.
+  `CHANGELOG.md` and the ADR index were in no conflict (0006), one ADR was renumbered at merge
+  and no task waited for a number (0009); the integrator sent 12 messages against 28 in run 2.
+  But all 9 bounces were code conflicts: the integrator dispatched four tasks that append a
+  function to the same module (`textkit/strings.py`) and its test file at once, and each merge
+  moved the end of the file. One 5-minute stall was an API delay.
 
 ## What the runs show
 
@@ -120,7 +127,11 @@ Notes per run:
    questions they raise) are worth their turns only when they prevent a collision.
 5. **Every stop that waits for the user stops the whole run**: the guideline question, a red
    check caused by a reservation, a force push the auto mode refused, a machine asleep.
-6. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
+6. **Code appended to one file by parallel tasks still collides** (run 5): `merge=union` is
+   no answer for code. The dispatcher must not run such tasks at once, or new code must go in
+   a sorted position instead of at the end. Run 5 against run 2 also shows how much one
+   dispatch order changes a single run.
+7. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
    tells the integrator what happened, the run waits (decision 0005).
 
 ## Caveats
