@@ -82,13 +82,14 @@ FAKE
 cat > "$fake/gh" <<'FAKE'
 #!/usr/bin/env bash
 # Fake gh: `pr view N [--json ...] [-q EXPR]` reads $FAKE_GH/pr-N.json, `pr list` prints
-# $FAKE_GH/list.json, `pr comment` is logged.
+# $FAKE_GH/list.json, `pr comment` is logged, `api user` prints the account (tester).
 case "$1 $2" in
     "pr view") n=$3; shift 3; q=.
         while [[ $# -gt 0 ]]; do case "$1" in -q) q=$2; shift 2 ;; *) shift ;; esac; done
         [[ -f "$FAKE_GH/pr-$n.json" ]] || { echo "no pull requests found" >&2; exit 1; }
         jq -r "$q" "$FAKE_GH/pr-$n.json" ;;
     "pr list") cat "$FAKE_GH/list.json" ;;
+    "api user") echo "${FAKE_GH_USER:-tester}" ;;
     "pr comment") echo "comment $3" >> "$FAKE_GH/log" ;;
     *) exit 2 ;;
 esac
@@ -472,7 +473,7 @@ make_pr() {  # make_pr <N> <branch> <file> <content>: push a branch from $dev an
 pr_json() {  # pr_json <N> <branch>: the fake GitHub view of PR N at origin/<branch>'s head
     jq -n --argjson n "$1" --arg b "$2" --arg h "$(git -C "$origin" rev-parse "refs/heads/$2")" \
         '{number: $n, title: "PR \($n)", headRefName: $b, headRefOid: $h, baseRefName: "main",
-          state: "OPEN", isCrossRepository: false,
+          state: "OPEN", isCrossRepository: false, author: {login: "tester"},
           body: "## Summary\nx\n\n## Plan tasks completed\n- task \($n)\n\n## Docs\nnone\n"}' > "$FAKE_GH/pr-$1.json"
 }
 push_main() {  # push_main <file> <content>: someone else's commit lands on origin/main
@@ -498,10 +499,22 @@ integrate 1
 check "integrate-pr: merges a green PR (exit 0)" bash -c '[[ $1 == 0 && "$2" == *"RESULT merged"*"deleted"* ]]' _ "$rc" "$out"
 check "integrate-pr: the PR's file is on origin/main" on_main src/one.txt
 check "integrate-pr: the head branch is deleted"      not remote_branch feat/one
+
 check "integrate-pr: the claim is released"           [ -z "$(cd "$proj" && "$ps" claims | awk -F'\t' '$1 == 1')" ]
 check "integrate-pr: a plan report waits for the coordinator" \
     [ "$(cd "$proj" && "$ps" report list | cut -f1,4 | tr '\t' ' ')" == "1 - task 1" ]
 check "integrate-pr: one verification" [ "$(runs 1)" == 1 ]
+
+# Someone else's PR (another GitHub account opened it): only with the user's yes, per PR.
+make_pr 90 feat/foreign src/foreign.txt foreign
+jq '.author.login = "contributor"' "$FAKE_GH/pr-90.json" > "$FAKE_GH/pr-90.tmp" && mv "$FAKE_GH/pr-90.tmp" "$FAKE_GH/pr-90.json"
+integrate 90
+check "integrate-pr: refuses another account's PR (exit 2)" bash -c '[[ $1 == 2 && "$2" == *"opened by contributor"*"--author-ok contributor"* ]]' _ "$rc" "$out"
+check "integrate-pr: nothing of it is on origin/main"       not on_main src/foreign.txt
+integrate 90 --author-ok someone-else
+check "integrate-pr: a yes for another author does not count" [ "$rc" = 2 ]
+integrate 90 --author-ok contributor
+check "integrate-pr: merges it with --author-ok <author>"   bash -c '[[ $1 == 0 && "$2" == *"RESULT merged"* ]]' _ "$rc" "$out"
 
 make_pr 2 feat/fail fail.txt boom
 integrate 2
@@ -753,7 +766,7 @@ sdev="$work/single-dev"; git clone --quiet "$sorigin" "$sdev"
 git -C "$sdev" checkout --quiet -b feat/s && echo s > "$sdev/s.txt" && git -C "$sdev" add -A \
     && git -C "$sdev" commit --quiet -m s && git -C "$sdev" push --quiet origin feat/s
 jq -n --arg h "$(git -C "$sorigin" rev-parse refs/heads/feat/s)" '{number: 1, title: "s", body: "", headRefName: "feat/s",
-    headRefOid: $h, baseRefName: "main", state: "OPEN", isCrossRepository: false}' > "$FAKE_GH/pr-1.json"
+    headRefOid: $h, baseRefName: "main", state: "OPEN", isCrossRepository: false, author: {login: "tester"}}' > "$FAKE_GH/pr-1.json"
 out=$(cd "$single" && env CLAUDE_ROLE=integrator "$ipr" 1 2>&1); rc=$?
 check "integrate-pr: single mode merges in the main worktree" \
     bash -c '[[ $1 == 0 ]] && git -C "$2" cat-file -e main:s.txt && [[ "$(git -C "$3" rev-parse main)" == "$(git -C "$2" rev-parse main)" ]]' _ "$rc" "$sorigin" "$single"

@@ -77,27 +77,56 @@ The same in words, for one PR:
 Requirements: herdr (built against 0.9.5) with Claude Code running inside it (`HERDR_ENV=1`),
 `git`, `bash`, `jq`, `python3` (3.9+) and the GitHub CLI `gh`.
 
-1. herdr, if missing: `curl -fsSL https://herdr.dev/install.sh | sh` (other methods:
-   https://herdr.dev/tui/docs/install/), then `herdr integration install claude`.
-2. From inside the repository you want to set up (copies the project-owned files without
-   overwriting, `--dry-run` previews, `--force` overwrites, and enables the plugin in
-   `.claude/settings.json`):
+Once per machine, herdr, if missing: `curl -fsSL https://herdr.dev/install.sh | sh` (other
+methods: https://herdr.dev/tui/docs/install/).
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
-   # or, from a local clone:  bash /path/to/herdr-agent-pool/install.sh
-   ```
+Then, in each repository you want to set up, one command from inside it:
 
-3. Install the plugin for the project:
+```bash
+curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
+# or, from a local clone:  bash /path/to/herdr-agent-pool/install.sh
+```
 
-   ```bash
-   claude plugin marketplace add R0drig0V1/herdr-agent-pool      # or /path/to/herdr-agent-pool
-   claude plugin install herdr-agent-pool@herdr-agent-pool --scope project
-   ```
+It does the whole setup and ends with a report of this machine and the steps that are left:
 
-   To try it without installing: `claude --plugin-dir /path/to/herdr-agent-pool/plugin`.
-4. Inside herdr, run `/herdr-agent-pool:setup` once: it checks herdr, the Claude integration
-   and the project, and installs anything only after you confirm.
+- Copies the project-owned files without overwriting: an existing file is kept and listed
+  (`--force` overwrites, without a backup). It never writes through a symbolic link or
+  outside the repository.
+- Enables the plugin in `.claude/settings.json` and sets the plugins it must not run next to,
+  `multi-agent@claude-code-multi-agent` and `multi-agent-herdr@claude-code-herdr`, to `false`
+  there.
+- Installs the plugin for the project with the `claude` CLI when it is not installed yet
+  (`--no-plugin` skips that). Without the CLI it prints the two commands:
+  `claude plugin marketplace add R0drig0V1/herdr-agent-pool` and
+  `claude plugin install herdr-agent-pool@herdr-agent-pool --scope project`.
+- Checks `jq`, `python3`, `gh`, herdr and herdr's Claude integration. It never installs
+  herdr; when the integration is missing it asks before running
+  `herdr integration install claude`.
+- `--dry-run` previews everything, asks nothing and changes nothing.
+
+What is left is yours: fill in the TODOs of `CLAUDE.md`, put your checks in
+`scripts/check.sh`, commit, and launch the integrator inside herdr with
+`scripts/integrator.sh` (pool mode: `scripts/coordinator.sh`). `/herdr-agent-pool:setup` runs
+the same checks from inside Claude Code later (after a plugin update, or to diagnose a
+project) and reviews the project's CI; it is not a required step.
+
+To try the plugin without installing: `claude --plugin-dir /path/to/herdr-agent-pool/plugin`.
+
+**"Plugin not found in marketplace".** The plugin id ends in the marketplace name, so the
+marketplace must be registered as `herdr-agent-pool`. A machine that already knows this
+GitHub repository under another name (it was set up before the rename, or the user's
+`~/.claude/settings.json` declares it so in `extraKnownMarketplaces`) answers
+`claude plugin marketplace add R0drig0V1/herdr-agent-pool` with "already on disk" and adds
+nothing, and the install then fails with "not found in marketplace". The installer detects
+this, names the other marketplace and asks before removing it; removing a marketplace also
+uninstalls, on that machine, the plugins installed from it. By hand
+(`claude plugin marketplace list` shows the name):
+
+```bash
+claude plugin marketplace remove <the other name>
+claude plugin marketplace add R0drig0V1/herdr-agent-pool
+claude plugin install herdr-agent-pool@herdr-agent-pool --scope project
+```
 
 **Scope.** A project-scope install lives in that repository's `.claude/settings.json`. With a
 user-scope install the skills are listed everywhere, but the guard and SessionStart hooks only
@@ -207,7 +236,10 @@ Every name changed, and **the old names are no longer read**:
 
 Moving a machine and a project over, with every session of the project stopped:
 
-1. **The plugin**:
+1. **The plugin and the project**: rerun `install.sh` in the project. It enables the new id,
+   sets the old one to `false`, and installs the plugin. On a machine that still has the
+   `claude-code-herdr` marketplace pointing at this repository it asks before removing it
+   (Install, "Plugin not found in marketplace"); the same by hand:
    ```bash
    claude plugin uninstall multi-agent-herdr@claude-code-herdr
    claude plugin marketplace remove claude-code-herdr
@@ -216,9 +248,8 @@ Moving a machine and a project over, with every session of the project stopped:
    ```
    If you also use the two-level plugin elsewhere, add its marketplace again from
    `R0drig0V1/claude-code-herdr`.
-2. **The project**: rerun `install.sh` (it enables the new id and sets the old one to
-   `false`), `git mv .claude/multi-agent-herdr.json .claude/herdr-agent-pool.json`, and
-   replace `/multi-agent-herdr:` with `/herdr-agent-pool:` and `MULTI_AGENT_HERDR_` with
+2. **The project's names**:
+   `git mv .claude/multi-agent-herdr.json .claude/herdr-agent-pool.json`, and replace `/multi-agent-herdr:` with `/herdr-agent-pool:` and `MULTI_AGENT_HERDR_` with
    `HERDR_AGENT_POOL_` in `CLAUDE.md`, `.claude/prompts/` and the project's scripts.
 3. **The state**: rename `<git common dir>/multi-agent-herdr` to `herdr-agent-pool`, and the
    same under `~/.config` and `~/.cache`. Otherwise the pool starts empty: no claims, no
@@ -285,7 +316,7 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Skill | `dispatch` | Integrator only: `new-worktree.sh`, then `herdr worktree open` (fallback `workspace create`) as its own workspace, `herdr agent start <name> --kind claude`, and the brief |
 | Skill | `commit` | Conventional Commits in English, runs `scripts/check.sh` first, never stages secrets |
 | Skill | `pr` | Rebases, checks, opens the PR with a structured body, announces it to the project's integrator herdr agent (`integrator_name`) |
-| Skill | `integrate` | Integrator loop (both modes): queue (`pool-state.py queue`) -> claim (pool) -> review -> `integrate-pr.sh` -> plan (single) or merge report to the coordinator (pool) -> verdict to the author's herdr agent, "main moved" to the others |
+| Skill | `integrate` | Integrator loop (both modes): queue (`pool-state.py queue`) -> claim (pool) -> review -> `integrate-pr.sh` -> plan (single) or merge report to the coordinator (pool) -> verdict to the author's herdr agent |
 | Skill | `coordinate` | Pool mode, coordinator only: arbitrate resources (board, requests, save mode), scale the pool by asking its members, tick the plan from merge reports and push it under the merge lock, answer development agents, escalate blocked ones |
 | Skill | `document` | Brings docstrings, `docs/`, ADRs and `CLAUDE.md` up to date |
 | Skill | `issue` | Any role: writes a GitHub issue for work left for later (evidence, acceptance criteria, scope, risk, size, `Depends on`), after a duplicate search, and links it from the code (`TODO(#N)`), the docs and the PR |
@@ -309,6 +340,14 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Script | `land.py` | The lander of the GitHub Actions design (phase 1): drains the PRs labelled `queue` in a workflow, checks CI, approvals, `risk:high` and `base-red`, verifies each merge and pushes it; conflicts and red checks bounce, counted up to `needs-human` ([docs/lander.md](docs/lander.md)) |
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys) |
 
+Each skill's `SKILL.md` holds the normal path only: preconditions, the steps with their
+commands, and the "Never" rules. Rare branches and message templates live beside it in
+`skills/<skill>/references/*.md`, which an agent reads only when a line of the skill says so
+(for example `integrate/references/exit-codes.md` on an unusual `integrate-pr.sh` exit code,
+`integrate/references/base-red.md`, `dispatch/references/brief.md`). The always-loaded files
+(`template/CLAUDE.md` and the two role prompts) state each rule once and point to the skill
+that details it.
+
 Project-owned files from `template/`: `CLAUDE.md`, `scripts/check.sh` (your definition of
 green), `scripts/integrator.sh`, `scripts/coordinator.sh`, `.claude/prompts/integrator.md`,
 `.claude/prompts/coordinator.md`, `.claude/settings.json`,
@@ -328,6 +367,13 @@ green), `scripts/integrator.sh`, `scripts/coordinator.sh`, `.claude/prompts/inte
   `herdr pane run|send-keys|send-text`, `herdr terminal attach|session` and `herdr agent
   prompt` to anyone but `integrator` are blocked, so an agent cannot run commands in, or
   answer dialogs of, another pane (the integrator's included).
+- **Ask before working on someone else's pull request.** A PR opened by another GitHub
+  account than the one `gh` is logged in as (an outside contributor, a bot such as Dependabot)
+  is read-only for every agent until the user says yes: no review verdict, comment, push to
+  its branch, label, merge or close. The question is asked every time: a yes covers that PR
+  and that step, not the next PR or the next session, and a herdr message is never that yes.
+  `integrate-pr.sh` enforces it for merges: it refuses such a PR (exit 2) unless it gets
+  `--author-ok <the PR's author>`.
 - **A `blocked` agent is escalated to the user.** When `herdr agent list` shows `blocked`, or a
   prompt fails with `agent_blocked` / `agent start` with `agent_not_ready`, tell the user which
   agent (and workspace) waits for them, and do not send it anything until it is `idle` again.

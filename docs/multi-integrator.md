@@ -105,7 +105,6 @@ sequenceDiagram
 | PR announcement | development agent | one pool member | `pr` -> `integrator-pool.sh route` (first `idle`/`done` member, else the first `working` one; never a `blocked` one) |
 | Question, blocked state | development agent | coordinator | `herdr agent prompt <coordinator_name>` |
 | Verdict | the integrator that handled the PR | the author | PR comment + `herdr agent prompt` (resolved with `agents-in-repo.py --branch`) |
-| "base moved" | the integrator that merged | other development agents | `agents-in-repo.py --dev-only` |
 | Merge report | integrator | coordinator | `pool-state.py report add` (durable) + `herdr agent prompt` (wake-up) |
 | Kickoff, nudge | coordinator | pool member | `integrator-pool.sh spawn`, or a prompt when PRs wait and every member is idle |
 | `RESOURCE REQUEST` / `GO` / `WAIT` / `YIELD`, `SAVE MODE ON/OFF` | any agent <-> coordinator | negotiated against the resource board (see "Resources") |

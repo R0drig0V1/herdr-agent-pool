@@ -11,6 +11,20 @@ All notable changes to this project are documented here. The format follows
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- `install.sh` is now the whole per-repository setup, one command instead of three steps. It
+  installs the plugin for the project with the `claude` CLI when it is not installed yet
+  (`--no-plugin` skips it), checks `jq`, `python3`, `gh`, herdr and herdr's Claude
+  integration, asks before running `herdr integration install claude`, and ends with a
+  report of the machine and only the steps that are left. `/herdr-agent-pool:setup` is no
+  longer a required step. herdr itself is never installed by it.
+- `install.sh` refuses to write through a symbolic link or outside the repository, and stops
+  before copying when `.claude/settings.json` is valid JSON but not an object.
+- The integrator no longer tells the other agents that the base moved after a merge, and an
+  author no longer rebases or force-pushes a branch it has announced unless it bounced. Every
+  PR is already verified merged onto the current base. In a measured run (1 integrator, 3
+  agents, 6 tasks) those messages were a third of all messages, some reached agents that had
+  finished, and one made an author rewrite a branch under verification, which left its PR
+  closed instead of merged.
 - **Renamed to `herdr-agent-pool`**, so it no longer shares its names with the separate
   two-level plugin in claude-code-herdr: marketplace `herdr-agent-pool`, plugin id
   `herdr-agent-pool@herdr-agent-pool`, skills `/herdr-agent-pool:<skill>`, settings
@@ -19,8 +33,30 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   `HERDR_AGENT_POOL_*`. The old names are not read: README, "Renamed from multi-agent-herdr",
   lists the moves; `setup` reports the old names a project still has. The installer also
   turns off `multi-agent-herdr@claude-code-herdr` in a project it sets up.
+- **Shorter prompts** (about 40% fewer tokens loaded per role, no rule or behaviour changed).
+  `commit`, `pr`, `integrate`, `coordinate` and `dispatch` keep the normal path in `SKILL.md`;
+  rare branches and message templates moved to `skills/<skill>/references/*.md`, read only
+  when the skill says so (the rare `integrate-pr.sh` exit codes, a red base, a PR that needs a
+  decision, cleanup failures, promotion, the dispatch brief, the PR body, no `gh`, no live
+  integrator). `template/CLAUDE.md` and the role prompts state each rule once and point to the
+  skill that details it. Projects already set up keep their own copies of those three files;
+  compare them with `template/` to take the shorter text. `tests/test-hooks.sh` now also
+  checks the message header in `references/*.md`.
 
 ### Added
+- `install.sh` detects a machine that knows this GitHub repository as a marketplace with
+  another name (set up before the rename, or declared so in the user's settings). There,
+  `claude plugin marketplace add` answers "already on disk", adds nothing, and the plugin is
+  then "not found in marketplace". The installer names the other marketplace and asks before
+  removing it (that also uninstalls the plugins installed from it); without a terminal, on
+  "no" and in a dry run it prints the commands instead. README, Install, and the `setup`
+  skill describe the same fix by hand.
+- `install.sh` reports the `claude` CLI's own reason when it refuses to install the plugin,
+  and does not take a project-scope install of another repository for this one's.
+- Rule: ask the user before working on a pull request that another GitHub account opened,
+  every time (README, "Rules"; the project template's CLAUDE.md; the `integrate` and `pr`
+  skills). `integrate-pr.sh` refuses such a PR (exit 2) unless it gets
+  `--author-ok <the PR's author>`.
 - `land.py`, the lander (docs/lander.md): phase 1 of coordination through GitHub state. One
   run, in a per-base concurrency group, drains the PRs labelled `queue` oldest first; gates
   on draft, CI of the head commit, approval of the head commit (a person's for `risk:high`)
