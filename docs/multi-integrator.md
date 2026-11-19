@@ -9,7 +9,7 @@ parallel verification, the machine-wide resource budget and the open policy ques
 ## Why
 
 With one integrator, every step of the workflow goes through a single session: it talks to
-the user, plans, dispatches, reviews, verifies and merges. On the project (November 2026) about 20
+the user, plans, dispatches, reviews, verifies and merges. In one project (November 2026) about 20
 development agents produced 8 open PRs while one full verification (`scripts/check.sh`) took
 8-11 minutes under load: the queue grows faster than one session can drain it, and the user
 waits behind merges to talk to it.
@@ -29,7 +29,7 @@ Settings (`.claude/herdr-agent-pool.json`, read only by `project-config.py`):
 
 ```json
 {
-  "coordinator_name": "coordinator-the project",
+  "coordinator_name": "coordinator-myapp",
   "integrators": {
     "min": 1,
     "max": 3,
@@ -199,7 +199,7 @@ per PR. Trade-offs of the policies considered:
 
 | Policy when the base moved | Cost | Risk |
 |----------------------------|------|------|
-| **Re-verify** (chosen, except for exempt paths) | one more full check per collision (8-11 min on the project) | starvation under heavy merge traffic, bounded by `max_reverify` |
+| **Re-verify** (chosen, except for exempt paths) | one more full check per collision (8-11 min in one project) | starvation under heavy merge traffic, bounded by `max_reverify` |
 | Rebase/re-merge and push without verifying | none | a semantic conflict (both PRs green alone, red together) lands on `<base>` |
 | Re-merge, re-verify only when the PRs touch the same files | small | the same semantic-conflict risk, through imports and shared fixtures |
 | Exempt paths only (part of the chosen policy) | none | only as large as the exempt patterns: keep them to files no check reads |
@@ -398,16 +398,14 @@ them **parallel-safe**:
 - `verify-reset.sh` resets only the state of its own worktree.
 - Shared services (a database server) are started idempotently by name.
 
-**the project already satisfies it**:
+**An example that satisfies it** (a Python project with PostgreSQL):
 
-- `compose.yaml` fixes the project name (`name: the project`), so every worktree's
-  `scripts/ensure-db.sh` (`docker compose up -d --wait db`) reaches the same PostgreSQL server
-  on `127.0.0.1:55432`.
-- `tests/plugins/db.py` gives each pytest session its own template database
-  `the project_test_<random>` (migrated once) and each test a fresh copy
-  (`CREATE DATABASE ... TEMPLATE`), dropped afterwards; databases left by killed runs are
-  dropped only when stamped more than 6 h ago **and** unused, so a run in another worktree is
-  never disturbed.
+- The Docker Compose project name is fixed, so every worktree's database setup script
+  (`docker compose up -d --wait db`) reaches the same PostgreSQL server on one port.
+- The test fixtures give each pytest session its own template database `<app>_test_<random>`
+  (migrated once) and each test a fresh copy (`CREATE DATABASE ... TEMPLATE`), dropped
+  afterwards; databases left by killed runs are dropped only when stamped more than 6 h ago
+  **and** unused, so a run in another worktree is never disturbed.
 - `tests/conftest.py` points `HOME` and the data directory into `tmp_path`.
 - The serve tests inject uvicorn ("no port is bound").
 - `scripts/worktree-setup.sh` installs into the worktree (`.venv`, `web/node_modules`).
@@ -431,7 +429,7 @@ commands run at once on the machine, across every agent and project.
 - Worktree setup (`worktree-setup.sh`, from `verify-merge.sh`, `new-worktree.sh` and
   `integrator-pool.sh spawn`) goes through a separate **light** pool (`light_slots`,
   default 2): a warm-cache install never waits behind a test suite, yet a burst of new
-  worktrees cannot all install at once. (In the project, a new-worktree setup once waited 40 min
+  worktrees cannot all install at once. (In one project, a new-worktree setup once waited 40 min
   for a heavy slot.)
 - It stays code because a conversation cannot stop a process that is already allocating
   memory. When memory is scarce, agents answer late or not at all.
@@ -443,7 +441,7 @@ commands run at once on the machine, across every agent and project.
   `verify-merge.sh`, honoured only for CLAUDE_ROLE=integrator), then `plan` (the
   coordinator's own checks), then `normal` (everything else). A ticket that waited 20 min
   counts as `merge`, so nothing starves. Before this queue, waiters polled with no order: in
-  the project, author checks kept beating merge verifications to the slot, and one PR waited
+  one project, author checks kept beating merge verifications to the slot, and one PR waited
   40 min while a slot stood free.
 - Every retry **re-reads the limits**. Raising `heavy_slots` admits waiters at once; lowering
   it admits nobody new until the holders above the new limit finish (they are never killed,
@@ -520,7 +518,7 @@ The reasoning behind the defaults:
 
 - About 8 GB stay reserved for the system, the editor and the Docker VM.
 - Each Claude Code session takes 0.5-1.5 GB with its tools.
-- A heavy check needs 3-6 GB at its peak (the project: pytest with PostgreSQL copies, vitest
+- A heavy check needs 3-6 GB at its peak (one project: pytest with PostgreSQL copies, vitest
   with coverage, a Vite build).
 
 So: sessions ≈ RAM / 2 and heavy slots ≈ (RAM − 8) / 8. Measure the project's own check
@@ -565,7 +563,7 @@ shrinks for good.
 
 The merge itself is a script, not a sequence of commands an agent retypes. Each step is
 gated on the previous one's exit code, and the exit code is the verdict (see its header for
-the codes). It folds in the lessons of the project's integration helper:
+the codes). It folds in the lessons of an earlier project-specific integration helper:
 
 - **Stop on any conflict** except rows of an index table given with `--union-rows`
   (`union-rows.py`). The resolver keeps the rows of both sides and refuses two different rows

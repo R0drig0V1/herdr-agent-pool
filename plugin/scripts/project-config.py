@@ -155,7 +155,7 @@ def default_coordinator_name(root: str) -> str:
 def pool_member_name(prefix: str, n: int) -> str:
     """Herdr name of pool member `n`: `<prefix>-<n>`, the prefix cut so it fits 32 characters.
 
-    `prefix` is `integrator_name`; `integrator-the project` gives `integrator-the project-1`, ...
+    `prefix` is `integrator_name`; `integrator-myapp` gives `integrator-myapp-1`, ...
     """
     suffix = f"-{n}"
     return prefix[: HERDR_NAME_MAX - len(suffix)].rstrip("-_") + suffix
