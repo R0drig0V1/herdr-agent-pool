@@ -266,7 +266,7 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Script | `cleanup-worktree.sh` | After a merge: `--list` the development worktrees and their state; `<branch>` closes the agent's workspace, removes the worktree and deletes the branches, only when merged (a merged PR, tip in the base), clean and idle |
 | Script | `land.py` | The lander of the GitHub Actions design (phase 1): drains the PRs labelled `queue` in a workflow, checks CI, approvals, `risk:high` and `base-red`, verifies each merge and pushes it; conflicts and red checks bounce, counted up to `needs-human` ([docs/lander.md](lander.md)) |
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys, except numbers being renumbered) |
-| Script | `renumber.py` | Run by `integrate-pr.sh` on each merge: moves the PR's new numbered files (`numbered_files`) to the next free numbers on the base and rewrites their names in the PR's files |
+| Script | `renumber.py` | Run by `integrate-pr.sh` on each merge: moves the PR's new numbered files (`numbered_files`) to the next free numbers on the base and rewrites their names, links and kind mentions (`ADR 0001`) in the PR's files |
 
 Each skill's `SKILL.md` holds the normal path only: preconditions, the steps with their
 commands, and the "Never" rules. Rare branches and message templates live beside it in
