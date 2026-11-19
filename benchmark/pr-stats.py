@@ -24,7 +24,17 @@ import json
 import subprocess
 from datetime import datetime
 
-BOUNCE_WORDS = ("bounce", "changes needed", "not merged")
+# A comment reads like a bounce when it names one of these and does not open as a merge
+# verdict or a review. The integrator's wording changes between plugin versions ("Bounced: conflict
+# ...", "conflict with origin/<base> ...", "verification failed ...", the lander's "Your turn:
+# ... conflicts ... Rebase"), so the list is wide.
+BOUNCE_WORDS = ("bounce", "changes needed", "not merged", "conflict", "verification failed")
+NOT_BOUNCE = ("merged into", "review by", "re-reviewed")
+
+
+def is_bounce(body: str) -> bool:
+    text = (body or "").lower()
+    return not text.startswith(NOT_BOUNCE) and any(w in text for w in BOUNCE_WORDS)
 
 
 def gh(*args: str):
@@ -58,9 +68,7 @@ def main() -> int:
         if end:
             ends.append(when(end))
             open_minutes.append(stayed)
-        bounces = sum(
-            any(w in (c["body"] or "").lower() for w in BOUNCE_WORDS) for c in pr["comments"]
-        )
+        bounces = sum(is_bounce(c["body"]) for c in pr["comments"])
         shown = f"{stayed:.1f}" if stayed is not None else "-"
         print(
             f"#{pr['number']:<4} {pr['headRefName']:<26} {pr['state']:<7} opened +{opened:5.1f} min"
