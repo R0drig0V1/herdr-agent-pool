@@ -22,3 +22,4 @@ after changing it, measure it the same way and record the result.
 | [0007](0007-review-the-plan-before-dispatch.md) | Review a phase's plan before its first dispatch | accepted |
 | [0008](0008-guideline-counts-working-agents.md) | The sessions guideline counts working agents only | accepted |
 | [0009](0009-number-at-merge.md) | Number new ADRs and migrations at merge time | accepted |
+| [0010](0010-slim-integrator.md) | A slimmer single-mode integrator: plan ticks in the merge, a token-free watcher, compaction | accepted, to be measured |

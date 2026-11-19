@@ -54,6 +54,14 @@ Keys (all optional; a missing file means every default):
   top of `check_env` (a docs-only fast lane; off while `docs_only_paths` is empty). Names
   must look like `[A-Za-z_][A-Za-z0-9_]*` and may not start with `CLAUDE_`, `HERDR_` or
   `HERDR_AGENT_POOL_` (identity variables); values are strings without newlines.
+* `plan_ticks_in_merge` (default `true`): single mode only. integrate-pr.sh ticks the plan
+  tasks a PR lists under "Plan tasks completed" in `docs/phases/*.md` inside the merge
+  commit (plan-tick.py); `false` leaves the ticking to the integrator. Pool mode ignores it
+  (the coordinator ticks from the merge reports).
+* `integrator_compact_tokens` (default `120000`): single mode only. When the idle
+  integrator's context is above this many tokens, integrator-watch.sh sends it one
+  `/compact` (at most once per idle period and once every 10 minutes); `0` turns it off.
+  Pool mode ignores it.
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -173,6 +181,8 @@ def defaults(root: str) -> dict[str, Any]:
         "integrators": None,
         "verify": {k: type(v)() for k, v in VERIFY_DEFAULTS.items()},
         "numbered_files": {},
+        "plan_ticks_in_merge": True,
+        "integrator_compact_tokens": 120000,
         "mode": "single",
         "integrator_pool": [],
     }
@@ -271,6 +281,16 @@ def valid_branch(name: str) -> bool:
     )
 
 
+def _check_scalar(path: str, key: str, value: Any) -> None:
+    """Validate a boolean (`plan_ticks_in_merge`) or a count (`integrator_compact_tokens`)."""
+    if key == "plan_ticks_in_merge" and not isinstance(value, bool):
+        raise ConfigError(f"{path}: {key} must be true or false, got {value!r}")
+    if key == "integrator_compact_tokens" and (
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+    ):
+        raise ConfigError(f"{path}: {key} must be a non-negative integer (0: off), got {value!r}")
+
+
 def _checked(path: str, key: str, value: Any) -> Any:
     """`value` of the top-level `key`, validated (raises ConfigError)."""
     if key == "base_branch":
@@ -285,6 +305,8 @@ def _checked(path: str, key: str, value: Any) -> Any:
         return _verify_settings(path, value)
     elif key == "numbered_files":
         return _numbered_files(path, value)
+    elif key in ("plan_ticks_in_merge", "integrator_compact_tokens"):
+        _check_scalar(path, key, value)
     elif key == "protected_branches":
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
             raise ConfigError(f"{path}: protected_branches must be a list of patterns")
@@ -364,7 +386,7 @@ def main() -> int:
             print(f"project-config: unknown key {args.key!r}", file=sys.stderr)
             return 2
         value = value[part]
-    if isinstance(value, dict) or value is None:
+    if isinstance(value, (dict, bool)) or value is None:
         print(json.dumps(value))
     elif not isinstance(value, list):
         print(value)
