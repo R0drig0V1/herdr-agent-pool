@@ -133,10 +133,15 @@ Notes per run:
    questions they raise) are worth their turns only when they prevent a collision.
 5. **Every stop that waits for the user stops the whole run**: the guideline question, a red
    check caused by a reservation, a force push the auto mode refused, a machine asleep.
-6. **Code appended to one file by parallel tasks still collides** (run 5): `merge=union` is
-   no answer for code. The dispatcher must not run such tasks at once, or new code must go in
-   a sorted position instead of at the end. Runs 5 and 6 bounced 9 and 8 times on exactly that,
-   against 3 in run 2: the dispatch order decides it.
+6. **Code appended to one file by parallel tasks still collides** (runs 5 and 6: 9 and 8
+   bounces, against 3 in run 2, where the dispatch order differed). `merge=union` is no
+   answer for code. In run 6 a bounce cost its agent about 9 turns, and the 8 bounces about
+   14% of the run's turns and 12% of its tokens, but only a few minutes of wall time, since
+   other tasks went on meanwhile. Open question, deferred by the user (2026-11-19): accept
+   these conflicts as the price of parallelism, serialize tasks that write the same file
+   (cheaper conflicts, less parallelism for large tasks), ask authors to insert new code in a
+   sorted position, or let `integrate-pr.sh` resolve conflicts where both sides only add
+   lines and merge when the check passes.
 7. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
    tells the integrator what happened, the run waits (decision 0005).
 
