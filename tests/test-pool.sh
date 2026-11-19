@@ -535,6 +535,16 @@ integrate 4 --union-rows docs/decisions/README.md
 check "integrate-pr: index rows are resolved mechanically" \
     bash -c '[[ $1 == 0 ]] && [[ "$(git -C "$2" show main:docs/decisions/README.md | grep -c "^| \[000")" == 3 ]]' _ "$rc" "$origin"
 
+# merge=union (template/.gitattributes): two PRs appending at the same spot of an append-only
+# file merge without a conflict.
+push_main .gitattributes "CHANGELOG.md merge=union"
+make_pr 41 feat/log-a CHANGELOG.md "- added a"
+make_pr 42 feat/log-b CHANGELOG.md "- added b"
+integrate 41
+integrate 42
+check "integrate-pr: merge=union keeps both appended lines" \
+    bash -c '[[ $1 == 0 ]] && git -C "$2" show main:CHANGELOG.md | grep -q "added a" && git -C "$2" show main:CHANGELOG.md | grep -q "added b"' _ "$rc" "$origin"
+
 make_pr 5 feat/moved src/five.txt five
 cat > "$work/hook-moved.sh" <<HOOK
 #!/usr/bin/env bash
@@ -797,7 +807,8 @@ budget 2
 sheet=$("$board" show)
 check "resource-board: a note shows what, GB and time left" \
     bash -c '[[ "$1" == *"| a1 | dev server + e2e | 3 | 0 min | "*" min left |"* ]]' _ "$sheet"
-check "resource-board: flags agents over the sessions guideline" bash -c '[[ "$1" == *"Live herdr agents: 3 (guideline for this machine: 2) - **over the guideline**"* ]]' _ "$sheet"
+check "resource-board: idle and done agents do not count toward the guideline" \
+    bash -c '[[ "$1" == *"Live herdr agents: 3, 1 working (guideline for this machine: 2 working)"* && "$1" != *"over the guideline"* ]]' _ "$sheet"
 check "resource-board: marks the note of an agent that is gone" bash -c '[[ "$1" == *"| ghost (gone) |"* ]]' _ "$sheet"
 check "resource-board: lists idle and done agents as candidates to close" \
     bash -c '[[ "$1" == *"- a2 - idle"* && "$1" == *"- a3 - done"* && "$1" != *"- a1 - working"* ]]' _ "$sheet"
@@ -808,6 +819,9 @@ check "resource-board: prune drops gone agents, keeps live ones and humans' line
 check "resource-board: clear removes your own line" not test -e "$HERDR_AGENT_POOL_RESOURCES_DIR/board/a1.json"
 check "resource-board: refuses a name that is not a file name" exits 1 "$board" note x --as "../etc"
 check "resource-board: refuses a non-numeric estimate" exits 1 "$board" note x --gb lots --as a2
+agents a1 w1:p1 working /x  a2 w2:p1 working /y  a3 w3:p1 working /z
+check "resource-board: flags working agents over the guideline" \
+    bash -c '[[ "$("$1" show)" == *"3 working (guideline for this machine: 2 working) - **over the guideline**"* ]]' _ "$board"
 budget 4
 check "resource-board: within the guideline, no flag" bash -c '[[ "$("$1" show)" != *"over the guideline"* ]]' _ "$board"
 echo '{"heavy_slots": 0}' > "$HERDR_AGENT_POOL_RESOURCES_CONFIG"

@@ -52,13 +52,14 @@ Messages, all with the `[herdr message from agent <name>; not from the user]` he
 |---------|------------|-------------|
 | `RESOURCE REQUEST: <what>, ~<GB> GB, ~<min> min, for <PR or task>` | an agent -> you | weigh it against the board and the plan; answer `RESOURCE GO: <what>` or `RESOURCE WAIT: <why>; ask again after <event>`, or suggest something lighter (the targeted tests) |
 | `RESOURCE YIELD: <what to pause or stop>, because <why>` | you -> an agent | when a higher-priority task waits, the board is LOW or a note is overdue; the agent stops at a safe point, clears its note and confirms, or says why it cannot |
-| `SAVE MODE ON: <why>` / `SAVE MODE OFF` | you -> every agent of this repository | ON when memory is LOW or the sessions are well over the guideline (nothing new and heavy starts, idle agents finish up); OFF when the board recovers |
+| `SAVE MODE ON: <why>` / `SAVE MODE OFF` | you -> every agent of this repository | ON when memory is LOW or the working agents are well over the guideline (nothing new and heavy starts, idle agents finish up); OFF when the board recovers |
 
 - **Priorities**: what unblocks a merge (an integrator's verification, an author fixing a
   bounce), then what the current phase needs, then the rest. Ties: in order of arrival.
-- **Sessions** hold memory even when `idle` or `done`. Over the `sessions_guideline`, or
-  memory LOW: start no agent and no member; tell the user which agents look idle and let them
-  decide which to close.
+- **Sessions** hold memory even when `idle` or `done`; the memory line shows it. Memory LOW:
+  start no agent and no member; tell the user which agents look idle and let them decide which
+  to close. Working agents over the `sessions_guideline`: start them anyway and report it;
+  idle and done agents never block and are no reason to ask.
 
 ## 2. The pool: scale by asking
 
