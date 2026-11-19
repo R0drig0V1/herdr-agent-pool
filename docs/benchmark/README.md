@@ -89,6 +89,8 @@ All on 2026-11-19, the same seed, Opus 5.5 with effort high, at most 5 developme
 | 4 | the two-level plugin claude-code-herdr (4f9ded4), reviewed plan | 36.0 (about 23 without a 13-min machine sleep) | 41.1 | 3.0 / 13.3 | 7 | 12 | 40 | 87 | 1.45 M | **39.3 M** |
 | 5 | `main` after decisions 0006-0008 plus 0009 (PR #11), reviewed plan | 27.7 (about 23 without a 5-min machine sleep) | 29.4 | 3.4 / 12.7 | 9 | 9 | 39 | 103 | 1.36 M | 43.5 M |
 | 6 | repeat of run 5 (same plugin, plan and seed) | 20.3 | 22.6 | 1.8 / 6.2 | 8 | 8 | 29 | 87 | 1.39 M | 40.6 M |
+| 7 | as run 6, 30 tasks (phase 3: 12 independent tasks), up to 10 agents, single mode; phase 3 reviewed by the integrator during the run | 31.7 (phase 3 waited about 18 min for its review) | 13.8 (10 agents) | 2.3 / 5.1 | 10 | 10 | 54 | 116 | 2.24 M | 65.2 M |
+| 8 | as run 7, pool mode: a coordinator and 3 integrators; phase 3 already reviewed | 25.5 | 19.4 (10 agents) | 2.1 / 6.6 | 14 | 13 | 124 | 73 + 124 + 112 + 75 | 2.55 M | 93.2 M |
 
 Notes per run:
 
@@ -118,6 +120,15 @@ Notes per run:
   for run 5 without its sleep, so one configuration varies by a few minutes between runs.
   Again no stop for the user and no conflict on the shared files; 8 bounces, all of them code
   appended to `textkit/strings.py` and `tests/test_strings.py` by tasks dispatched at once.
+- **Runs 7 and 8** add phase 3 (12 independent tasks, one new module each) for width, and up
+  to 10 agents. Run 7 (one integrator): phase 3 waited about 18 minutes for its plan review
+  (decision 0007) while 8 of the 10 agent slots were free; one PR bounced to make its ADR
+  references safe for renumbering (decision 0009). Run 8 (pool, 3 integrators, phase 3
+  already reviewed): 20% faster, but 43% more cache reads (93.2 M against 65.2 M) and 2.3
+  times the messages; the coordinator and the three integrators took half of all cache reads.
+  A PR waited about as long for its merge in both runs (2.1 and 2.3 min on average), so one
+  integrator kept up with 10 agents: the time run 8 gained came from not waiting for the
+  review, not from more integrators.
 
 ## What the runs show
 
@@ -142,7 +153,13 @@ Notes per run:
    (cheaper conflicts, less parallelism for large tasks), ask authors to insert new code in a
    sorted position, or let `integrate-pr.sh` resolve conflicts where both sides only add
    lines and merge when the check passes.
-7. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
+7. **The pool pays only when one integrator cannot keep up.** With 10 agents on small tasks
+   whose check takes seconds, one integrator merged as fast as three; the pool cost 43% more
+   cache reads and twice the messages. It should pay off when a merge's verification is slow
+   (a long test suite), which this benchmark does not have yet.
+8. **Reviewing a phase's plan blocks it** (run 7): review the next phase while the current one
+   runs, or let the phase's tasks that depend on nothing start during the review.
+9. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
    tells the integrator what happened, the run waits (decision 0005).
 
 ## Caveats
