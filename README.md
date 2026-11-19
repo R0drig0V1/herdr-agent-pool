@@ -339,6 +339,14 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Script | `cleanup-worktree.sh` | After a merge: `--list` the development worktrees and their state; `<branch>` closes the agent's workspace, removes the worktree and deletes the branches, only when merged (a merged PR, tip in the base), clean and idle |
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys) |
 
+Each skill's `SKILL.md` holds the normal path only: preconditions, the steps with their
+commands, and the "Never" rules. Rare branches and message templates live beside it in
+`skills/<skill>/references/*.md`, which an agent reads only when a line of the skill says so
+(for example `integrate/references/exit-codes.md` on an unusual `integrate-pr.sh` exit code,
+`integrate/references/base-red.md`, `dispatch/references/brief.md`). The always-loaded files
+(`template/CLAUDE.md` and the two role prompts) state each rule once and point to the skill
+that details it.
+
 Project-owned files from `template/`: `CLAUDE.md`, `scripts/check.sh` (your definition of
 green), `scripts/integrator.sh`, `scripts/coordinator.sh`, `.claude/prompts/integrator.md`,
 `.claude/prompts/coordinator.md`, `.claude/settings.json`,
