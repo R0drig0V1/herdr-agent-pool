@@ -26,6 +26,10 @@ Start an agent for every task that can start now, without waiting to be asked.
   make you amend.
 - Stay within the machine's means ("Resources" below), and tell the user what you started and
   why, one line per agent.
+- **Review a phase's plan before its first dispatch.** When `docs/plan-reviews/` has no review
+  of the phase (its index lists the reviews), run `/herdr-agent-pool:improve-plan` on it first,
+  unless the user said to skip it. Measured: a reviewed plan halved the agents' working time,
+  because tasks that touch the same module get chained and vague specs get exact.
 
 ## 0. Preconditions (stop and tell the user if any fails)
 
@@ -51,8 +55,9 @@ not survive from one command to the next.
 "${CLAUDE_PLUGIN_ROOT}/scripts/resource-board.sh" show
 ```
 
-Memory **LOW**, or the live agents over the `sessions_guideline`: do not dispatch yet. Tell the
-user which agents the board shows as idle and let them decide which to close, or wait.
+Memory **LOW**: do not dispatch yet; tell the user which agents the board shows as idle and
+let them decide which to close, or wait. Working agents over the `sessions_guideline`: dispatch
+anyway and say so in your report. Idle and done agents never block a dispatch: do not ask.
 
 ## 1. Name the branch and the agent
 

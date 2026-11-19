@@ -37,8 +37,8 @@ scripts/check.sh        # lint + types + tests; must stay green (edit it per pro
 - **Green** means `scripts/check.sh` passes: the `commit` and `pr` skills and the integrator's
   `verify-merge.sh` all run it.
 - **Plan:** `docs/phases/` (roadmap: `docs/phases/README.md`). Check the current phase before
-  starting work. Before starting a phase, run `/herdr-agent-pool:improve-plan` (reviews go to
-  `docs/plan-reviews/`).
+  starting work. A phase is reviewed with `/herdr-agent-pool:improve-plan` before its first
+  dispatch (the dispatcher does it when no review exists; reviews go to `docs/plan-reviews/`).
 - **Skills** (`/herdr-agent-pool:<name>`): `commit` (Conventional Commits, no emojis, checks
   first), `pr`. `integrate`, `dispatch` and `coordinate` are for those roles only; `setup` is
   for the user. Agents: `plan-adversary`, `code-reviewer` (both read-only).

@@ -13,7 +13,7 @@ plugin does not edit the project; the project's own integrator
 
 - [ ] **Upgrade the plugin** to 0.2.0 or later (`claude plugin marketplace update
       herdr-agent-pool`, then update `herdr-agent-pool`; a machine that still has the names
-      from before 2026-11 moves first: README, "Renamed from multi-agent-herdr"). Restart the sessions that should
+      from before 2026-11 moves first: docs/reference.md, "Renamed from multi-agent-herdr"). Restart the sessions that should
       pick up the new hooks: hooks and skills load when a session starts.
 - [ ] **Write the machine's resource limits**, a new file in 0.2.0. It is per computer, not
       per project, and shared by every project:

@@ -11,6 +11,18 @@ All notable changes to this project are documented here. The format follows
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- The README is short: what the plugin does, the diagram, install, the skills, the core rules
+  and a documentation index. Every detail it held moved to the new `docs/reference.md`.
+- Fewer conflicts and interruptions, from a measured benchmark (docs/benchmark/):
+  - the template's `.gitattributes` marks `CHANGELOG.md` and the docs indexes `merge=union`,
+    so parallel PRs that append at the same spot no longer bounce (README, "Fewer conflicts");
+  - the dispatcher runs `/herdr-agent-pool:improve-plan` before a phase's first dispatch when
+    the phase has no review;
+  - the `sessions_guideline` counts working agents only: idle and done sessions (often of
+    other repositories) no longer block a dispatch or make the dispatcher ask the user, and
+    working agents over the guideline are reported, not a stop; only low memory stops it;
+  - the `pr` skill fetches with `--prune` before rebasing and after a rejected push of a new
+    branch, so a stale `origin/<branch>` is not mistaken for someone else's branch.
 - Numbered files (`numbered_files`: migrations, ADRs) are numbered at merge time, not at
   dispatch. Authors take the next free number on their own base, so their checks pass, and
   `integrate-pr.sh` (new `renumber.py`) moves a PR's new files to the next free numbers on
@@ -54,6 +66,11 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   checks the message header in `references/*.md`.
 
 ### Added
+- `docs/decisions/`: the plugin's own design decisions (0001-0009), each with its context,
+  alternatives and evidence; `docs/benchmark/`: the method and the four first runs of the
+  benchmark (five agents, an 18-task backlog in the public `textkit-sandbox`), with
+  `benchmark/measure.py` (turns, messages, tokens from session transcripts) and
+  `benchmark/pr-stats.py` (PR timings, bounces, force pushes from GitHub).
 - `install.sh` detects a machine that knows this GitHub repository as a marketplace with
   another name (set up before the rename, or declared so in the user's settings). There,
   `claude plugin marketplace add` answers "already on disk", adds nothing, and the plugin is

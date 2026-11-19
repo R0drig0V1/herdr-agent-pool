@@ -99,10 +99,10 @@ ls "$root"/scripts/check.sh "$root"/scripts/integrator.sh "$root"/.claude/prompt
   ones send sessions to `/multi-agent:worktree` + `EnterWorktree`, which this plugin replaces
   with `dispatch`. Show the user the `enabledPlugins` line to remove (or set to `false`) and
   change it only after they confirm.
-- **Names from before 2026-11** (the plugin was `multi-agent-herdr@claude-code-herdr`; README,
+- **Names from before 2026-11** (the plugin was `multi-agent-herdr@claude-code-herdr`; docs/reference.md,
   "Renamed from multi-agent-herdr"): the plugin no longer reads them. A project that only has
   `.claude/multi-agent-herdr.json` runs on the defaults (single mode), and old state or limits
-  directories are ignored. Report each one found with its move from the README, and make the
+  directories are ignored. Report each one found with its move from docs/reference.md, and make the
   moves only after the user confirms, with every session of the project stopped.
   `multi-agent-herdr@claude-code-herdr` enabled may also be the separate two-level plugin:
   check which repository the `claude-code-herdr` marketplace entry names before changing it.

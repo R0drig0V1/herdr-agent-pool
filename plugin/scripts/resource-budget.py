@@ -37,7 +37,8 @@ Limits, machine-wide, from `~/.config/herdr-agent-pool/resources.json` (or the f
     {"heavy_slots": 2, "light_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
 
 `heavy_slots` and `light_slots` are enforced; the other two are the guidelines the resource
-board shows and the coordinator weighs (live sessions for this RAM; the free memory below which
+board shows and the coordinator weighs (working sessions for this RAM; idle and done ones do
+not count; the free memory below which
 it declares save mode). Defaults from the machine's RAM (R GB): heavy_slots =
 max(1, (R - 8) // 8), light_slots = 2, sessions_guideline = max(2, R // 2), low_memory_gb =
 R / 10; a 24 GB machine gets 2, 2, 12 and 2.4. `$HERDR_AGENT_POOL_HEAVY_SLOTS` overrides
