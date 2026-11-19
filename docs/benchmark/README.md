@@ -83,18 +83,23 @@ All on 2026-11-19, the same seed, Opus 5.5 with effort high, at most 5 developme
 
 | Run | Configuration | Wall (min) | Ideal wall (min) | Open time mean / max (min) | Bounces | Force pushes | Messages sent | Integrator turns | New tokens | Cache reads |
 |-----|---------------|-----------:|-----------------:|---------------------------:|--------:|-------------:|--------------:|-----------------:|-----------:|------------:|
-| 1 | herdr-agent-pool before decisions 0002-0003, plan as written | 35.4 | 21.9 | 2.4 / 7.9 | 8 | 13 | 69 | 106 | 1.65 M | 52.4 M |
+| 1 | herdr-agent-pool before decisions 0002-0003, plan as written | 35.4 | 21.9 | 2.4 / 7.9 | 9 | 13 | 69 | 106 | 1.65 M | 52.4 M |
 | 2 | decisions 0002-0003; plan reviewed first (+11.5 min, not in the wall time) | **17.9** | 12.4 | **0.9 / 2.2** | **3** | **3** | 54 | **83** | **1.25 M** | 40.6 M |
-| 3 | run 2 plus the lander in Actions (decision 0005), reviewed plan | 62.5 | 39.4 | 5.1 / 24.1 | 4 | 9 | 61 | 139 | 1.54 M | 56.5 M |
+| 3 | run 2 plus the lander in Actions (decision 0005), reviewed plan | 62.5 | 39.4 | 5.1 / 24.1 | 9 | 9 | 61 | 139 | 1.54 M | 56.5 M |
 | 4 | the two-level plugin claude-code-herdr (4f9ded4), reviewed plan | 36.0 (about 23 without a 13-min machine sleep) | 41.1 | 3.0 / 13.3 | 7 | 12 | 40 | 87 | 1.45 M | **39.3 M** |
 | 5 | `main` after decisions 0006-0008 plus 0009 (PR #11), reviewed plan | 27.7 (about 23 without a 5-min machine sleep) | 29.4 | 3.4 / 12.7 | 9 | 9 | 39 | 103 | 1.36 M | 43.5 M |
 | 6 | repeat of run 5 (same plugin, plan and seed) | 20.3 | 22.6 | 1.8 / 6.2 | 8 | 8 | 29 | 87 | 1.39 M | 40.6 M |
 | 7 | as run 6, 30 tasks (phase 3: 12 independent tasks), up to 10 agents, single mode; phase 3 reviewed by the integrator during the run | 31.7 (phase 3 waited about 18 min for its review) | 13.8 (10 agents) | 2.3 / 5.1 | 10 | 10 | 54 | 116 | 2.24 M | 65.2 M |
 | 8 | as run 7, pool mode: a coordinator and 3 integrators; phase 3 already reviewed | 25.5 | 19.4 (10 agents) | 2.1 / 6.6 | 14 | 13 | 124 | 73 + 124 + 112 + 75 | 2.55 M | 93.2 M |
+| 9 | as run 6, plus the watcher and compaction of the integrator (decision 0010) and the lean start of development agents (decision 0011) | 20.3 | 16.9 | 1.6 / 5.8 | 8 | 8 | 32 | 101 | 1.24 M | **27.3 M** |
 
 Notes per run:
 
-- **Run 1.** All 8 bounces were append conflicts in `CHANGELOG.md`, the README table and test
+Bounces count the PR comments that ask for a rebase or a fix; runs 1 and 3 were recounted
+when `pr-stats.py` learned the later wordings ("conflict ...", "Your turn: ... Rebase"), from 8
+and 4.
+
+- **Run 1.** All 9 bounces were append conflicts in `CHANGELOG.md`, the README table and test
   files; two tasks bounced twice. Every run stopped once at the sessions-guideline question
   (decision 0008). One agent stopped for a red check caused by an ADR number reserved by an
   unfinished task.
@@ -102,7 +107,8 @@ Notes per run:
   rounds, 18 findings; it chained tasks that write the same module, sorted shared rows and
   made the specs exact. Runs 3 and 4 use this reviewed plan. Its numbers count from the
   first dispatch, after the review.
-- **Run 3.** The lander merged every PR (47 runs, none failed) but nothing woke the
+- **Run 3.** The lander merged every PR (47 runs, none failed); its bounces were requests to
+  rebase after another PR landed. But nothing woke the
   integrator after a merge or a bounce: it sat idle 14 minutes, and again later, until the user
   wrote to it. One agent asked for a force push because of a stale remote-tracking branch
   from run 2.
@@ -129,14 +135,29 @@ Notes per run:
   A PR waited about as long for its merge in both runs (2.1 and 2.3 min on average), so one
   integrator kept up with 10 agents: the time run 8 gained came from not waiting for the
   review, not from more integrators.
+- **Run 9.** Run 6's configuration with decisions 0010 and 0011: the same turns (503) and
+  wall time (20.3 min), a third fewer cache reads (27.3 M against 40.6 M). A development
+  agent's turn read 41,800 tokens against 69,700 (-40%), from the lean start; the agents
+  made the same number of turns (402 against 416). The integrator compacted once, at
+  158,000 tokens down to 67,000 (it was busy when it crossed 120,000), and read 104,000
+  tokens per turn against 133,000. The 8 bounces were the same code conflicts in
+  `textkit/strings.py`. One renumbered ADR kept stale mentions ("ADR 0001" in a docstring,
+  the README table, `CHANGELOG.md`, a test name): the integrator asked for a follow-up PR,
+  whose change then failed another PR's verification (fixed in `renumber.py`, decision
+  0009's amendment). The last task, the usage guide, depends on all others and ran alone
+  for the last 4 minutes. An idle agent's automatic recap kept it marked as working, so
+  its worktree was not cleaned up and its agent-minutes ran on.
 
 ## What the runs show
 
 1. **The plan matters most.** The reviewed plan halved the agents' working time and cut
-   bounces from 8 to 3 (decision 0007).
-2. **Conflicts come from shared append-only files**, not from code (decision 0006).
+   bounces from 9 to 3 (decision 0007).
+2. **Conflicts came from shared append-only files** (decision 0006) until `merge=union`;
+   since then they come from code appended to the same module (item 6).
 3. **Turns drive the cost.** A bounced or vague task takes 2 to 4 times the turns of a clean
-   one, and every turn re-reads about 70,000 tokens (decision 0003).
+   one, and every turn re-reads the whole context (decision 0003). A smaller context per turn
+   is the other lever: the lean start cut a development agent's turn from about 70,000 to
+   42,000 tokens (run 9).
 4. **The integrator is the most expensive agent and the serial bottleneck**: about a third of
    the cache reads. Both plugins' integrators took about the same turns (83 in run 2, 87 in
    run 4), but this plugin's sent twice the messages (28 against 14) and its agents bounced

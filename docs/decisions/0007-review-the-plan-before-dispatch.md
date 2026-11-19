@@ -14,7 +14,7 @@ In benchmark run 2 the integrator ran the review first, at the user's request: 3
 findings, 11.5 minutes. It found by itself the causes of run 1's bounces (modules created by
 several tasks in parallel, appends at the same spot) and the vague specifications, chained
 the tasks that collide and made the specs exact. Against run 1: agent-minutes 110 to 62,
-bounces 8 to 3, force pushes 13 to 3, wall time from the first dispatch 35.4 to 17.9 minutes
+bounces 9 to 3 (recounted, see the benchmark), force pushes 13 to 3, wall time from the first dispatch 35.4 to 17.9 minutes
 (about 29 minutes including the review).
 
 ## Decision
