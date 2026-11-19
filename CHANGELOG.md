@@ -33,6 +33,26 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   reserves numbers; `pool-state.py reserve` still works but is not used by it. In a measured
   run, a reserved 0002 failed a "contiguous from 0001" check while 0001 was unfinished, and
   the agent stopped to ask the user.
+- A slimmer single-mode integrator (decision 0010): its mechanical steps moved into scripts
+  that spend no tokens.
+  - `integrate-pr.sh` ticks the plan tasks the PR body lists by id (`T1.2`) under "Plan tasks
+    completed" in `docs/phases/*.md` inside the merge commit, before the verification (new
+    `plan-tick.py`; one `PLAN-TICKED` or `PLAN-UNTICKED` line each, also in the commit
+    message); re-merges tick again. No separate `docs(plan)` commit per PR. The new setting
+    `plan_ticks_in_merge` (default `true`) turns it off; pool mode is unchanged.
+  - New `integrator-watch.sh`, started by the `integrate` skill in the background: every
+    minute it cleans up the worktrees `cleanup-worktree.sh --list` reports `ready`, and wakes
+    the integrator, only when it is idle or done, once per item, about open PRs that wait for
+    a verdict and queued PRs the lander merged or took out of the queue. In a measured run
+    the integrator sat idle 14 minutes after lander merges nothing told it about.
+  - The watcher also compacts the integrator: when it is idle or done and its context (read
+    from its Claude Code transcript by the new `context-tokens.py`) is above the new setting
+    `integrator_compact_tokens` (default 120000; 0 turns it off), it types one `/compact`
+    with what to keep (open PRs and their state, pending verdicts, the plan progress, what
+    the user asked), at most once per idle period and once every 10 minutes, never while it
+    works or is blocked. In a measured run (30 tasks) the integrator's context grew from 46.6k
+    to 301.6k tokens, and its 116 turns re-read 20.4M cache tokens, a third of the run.
+  - The `pr` skill's body template lists each completed task by its id.
 - `install.sh` is now the whole per-repository setup, one command instead of three steps. It
   installs the plugin for the project with the `claude` CLI when it is not installed yet
   (`--no-plugin` skips it), checks `jq`, `python3`, `gh`, herdr and herdr's Claude

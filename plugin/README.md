@@ -85,10 +85,11 @@ There are two modes, chosen by the project's settings file:
 | Script | `integrate-pr.sh` | The whole merge of one PR, gated by exit codes |
 | Script | `verify-merge.sh` | Runs the project's checks on a merge (setup, `check.sh`, reset) |
 | Script | `integrator-pool.sh` | Pool members: list, route, scale facts, spawn, stop, nudge, watch |
+| Script | `integrator-watch.sh` | Single mode's token-free watcher: wakes the idle integrator with news, cleans up merged worktrees |
 | Script | `resource-budget.py` | The machine's heavy and light slots, with a priority queue |
 | Script | `resource-board.sh` | The shared resource sheet: memory, sessions, slot holders, notes |
 | Script | `new-worktree.sh`, `cleanup-worktree.sh` | Create a development worktree; remove a merged one |
-| Script | `agents-in-repo.py`, `worktree-of.sh`, `start-agent.sh`, `claim-integrator.sh`, `union-rows.py`, `renumber.py` | Helpers: who runs where, starting a development agent with `agent_args`, name claims, index-table merges, numbering at merge |
+| Script | `agents-in-repo.py`, `worktree-of.sh`, `start-agent.sh`, `claim-integrator.sh`, `union-rows.py`, `renumber.py`, `plan-tick.py` | Helpers: who runs where, name claims, index-table merges, numbering and plan ticks at merge |
 
 Skills are instructions a Claude session follows; scripts are what makes the steps
 deterministic. A rule that matters is enforced by a script or a hook, and the skill explains

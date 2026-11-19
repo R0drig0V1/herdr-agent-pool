@@ -24,8 +24,8 @@ heading, so keep the headings as they are.
 <which docs/ pages were updated>
 
 ## Plan tasks completed
-<phase file and task lines to tick, e.g. `docs/phases/1-auth.md`: "Add login endpoint".
-Do not tick them yourself: the integrator (pool mode: the coordinator) owns docs/phases/.>
+<one line per task, its id first, e.g. `- T1.2 Add login endpoint (docs/phases/1-auth.md)`:
+the ids tick the plan at merge. Do not tick them yourself: docs/phases/ is the integrator's.>
 
 ## Follow-ups
 <"None", or the issues opened for work left out of this PR (/herdr-agent-pool:issue):
