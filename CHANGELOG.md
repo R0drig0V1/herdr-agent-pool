@@ -44,7 +44,7 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   checks the message header in `references/*.md`.
 
 ### Added
-- `docs/decisions/`: the plugin's own design decisions (0001-0008), each with its context,
+- `docs/decisions/`: the plugin's own design decisions (0001-0009), each with its context,
   alternatives and evidence; `docs/benchmark/`: the method and the four first runs of the
   benchmark (five agents, an 18-task backlog in the public `textkit-sandbox`), with
   `benchmark/measure.py` (turns, messages, tokens from session transcripts) and
