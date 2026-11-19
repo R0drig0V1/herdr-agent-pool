@@ -42,8 +42,9 @@ Keys (all optional; a missing file means every default):
 * `numbered_files` (default `{}`): numbered files that parallel branches must not number
   alike, as `{kind: regex}`; the regex matches a whole repository path and captures the
   number in its one group, e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md",
-  "migration": "src/app/migrations/(\\d{4})_.*\\.sql"}`. `pool-state.py reserve <kind>`
-  hands out the next free number. Kinds look like `[a-z][a-z0-9_-]*`.
+  "migration": "src/app/migrations/(\\d{4})_.*\\.sql"}`. Authors take the next free number
+  on their base; integrate-pr.sh renumbers a PR's new files at merge (renumber.py). Kinds
+  look like `[a-z][a-z0-9_-]*`.
 * `verify` (default: every field empty): how `verify-merge.sh` runs the project's
   `scripts/check.sh` on a merge. Its keys, all optional:
   `check_env` (`{}`): variables added to the check's environment on every merge

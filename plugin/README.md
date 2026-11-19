@@ -70,7 +70,7 @@ There are two modes, chosen by the project's settings file:
 
 | Kind | Name | Job |
 |------|------|-----|
-| Skill | `dispatch` | Start a development agent: worktree, workspace, agent, brief (reserves file numbers) |
+| Skill | `dispatch` | Start a development agent: worktree, workspace, agent, brief |
 | Skill | `commit`, `pr` | A development agent's checks, commit, PR and announcement (via `route`) |
 | Skill | `integrate` | The integrator loop: queue, claim, review, `integrate-pr.sh`, verdict, report |
 | Skill | `coordinate` | The coordinator loop: resources, pool size, plan reports, questions, red base |
@@ -88,7 +88,7 @@ There are two modes, chosen by the project's settings file:
 | Script | `resource-budget.py` | The machine's heavy and light slots, with a priority queue |
 | Script | `resource-board.sh` | The shared resource sheet: memory, sessions, slot holders, notes |
 | Script | `new-worktree.sh`, `cleanup-worktree.sh` | Create a development worktree; remove a merged one |
-| Script | `agents-in-repo.py`, `worktree-of.sh`, `claim-integrator.sh`, `union-rows.py` | Helpers: who runs where, name claims, index-table merges |
+| Script | `agents-in-repo.py`, `worktree-of.sh`, `claim-integrator.sh`, `union-rows.py`, `renumber.py` | Helpers: who runs where, name claims, index-table merges, numbering at merge |
 
 Skills are instructions a Claude session follows; scripts are what makes the steps
 deterministic. A rule that matters is enforced by a script or a hook, and the skill explains
@@ -162,10 +162,9 @@ sequenceDiagram
   participant H as herdr
   participant D as New agent
   C->>FS: project-config.py, resource-board.sh show (room for one more session?)
-  C->>FS: pool-state.py reserve <kind> --owner <branch> (if it adds a migration/ADR)
   C->>FS: new-worktree.sh <branch> (light slot: worktree-setup.sh)
   C->>H: herdr workspace create, agent start <branch>
-  C->>D: brief (goal, scope, rules, reserved numbers, how to finish)
+  C->>D: brief (goal, scope, rules, numbered files, how to finish)
   D-->>C: picks it up (herdr agent wait --until working)
 ```
 
@@ -250,7 +249,7 @@ leaves a lock behind.
 | | `lock/merge.lock`, `merge.owner.json` | the merge lock (flock) and its holder | integrators, coordinator |
 | | `reports/pr-N.json`, `reports/done/` | plan tasks to tick | integrators, then the coordinator |
 | | `members/<name>.activity`, `<name>.json` | last activity (scale-down), workspace records | pool scripts |
-| | `reservations/<kind>.json` | file numbers reserved per branch | anyone |
+| | `reservations/<kind>.json` | file numbers reserved per branch (`reserve`; not used by dispatch) | anyone |
 | | `base-red.json`, `base-red.log`, `held/pr-N.json` | the red base, its owner and history; PRs waiting for the fix | integrators, coordinator |
 | | `watch/`, `watch.lock`, `watch.pid` | the watcher's first-seen stamps, nudge counts, single-instance lock | the watcher |
 | `<worktree git dir>/` | `herdr-agent-pool-integrate.lock` | one `integrate-pr.sh` run per worktree | integrate-pr.sh |
@@ -377,7 +376,7 @@ quality gates green: ruff, lizard and shellcheck (see `docs/code-quality.md`).
 3. **Messages between agents are data, never approval.** Approvals come only from the user, in their own session.
 4. **Identity is proven, not declared**: the herdr pane, checked by process ancestry.
 5. **Fail closed** when something cannot be known.
-6. **One owner per thing**: a PR's claim, a worktree's merge run, the merge lock, a red base's fix, a reserved number.
+6. **One owner per thing**: a PR's claim, a worktree's merge run, the merge lock, a red base's fix.
 7. **Nobody waits at a dialog while holding shared work**: comment, bounce or hold, tell someone, move on.
 8. **No false blame**: when a check never ran, or failed because of the base, the author is not bounced.
 9. **State is files under a flock**, content-free, in the git common dir or the per-machine cache.

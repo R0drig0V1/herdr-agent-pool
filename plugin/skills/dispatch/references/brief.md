@@ -29,9 +29,7 @@ and ask "<me>" first: "RESOURCE REQUEST: <what>, ~<GB> GB, ~<min> min, for <task
 RESOURCE GO. On RESOURCE YIELD or SAVE MODE ON, stop at a safe point and confirm. Clear your
 note (resource-board.sh clear) as soon as it stops.
 Questions, or anything that blocks you: herdr agent prompt "<me>" with the same header.
-<only with reserved numbers:> Numbers reserved for this branch: <kind> <number>, ... Use them;
-if you need another, run "${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" reserve <kind> --owner
-<BRANCH> and never pick a number by looking at the tree.
+<only when it adds a numbered file:> the numbered-files line of references/numbered-files.md.
 Finish with /herdr-agent-pool:pr: it opens the PR against <base> and announces it to the
 integrator (pool mode: one live member of the integrator pool); the verdict comes back
 straight from the integrator that handles it.
