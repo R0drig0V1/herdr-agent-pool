@@ -77,27 +77,56 @@ The same in words, for one PR:
 Requirements: herdr (built against 0.9.5) with Claude Code running inside it (`HERDR_ENV=1`),
 `git`, `bash`, `jq`, `python3` (3.9+) and the GitHub CLI `gh`.
 
-1. herdr, if missing: `curl -fsSL https://herdr.dev/install.sh | sh` (other methods:
-   https://herdr.dev/tui/docs/install/), then `herdr integration install claude`.
-2. From inside the repository you want to set up (copies the project-owned files without
-   overwriting, `--dry-run` previews, `--force` overwrites, and enables the plugin in
-   `.claude/settings.json`):
+Once per machine, herdr, if missing: `curl -fsSL https://herdr.dev/install.sh | sh` (other
+methods: https://herdr.dev/tui/docs/install/).
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
-   # or, from a local clone:  bash /path/to/herdr-agent-pool/install.sh
-   ```
+Then, in each repository you want to set up, one command from inside it:
 
-3. Install the plugin for the project:
+```bash
+curl -fsSL https://raw.githubusercontent.com/R0drig0V1/herdr-agent-pool/main/install.sh | bash
+# or, from a local clone:  bash /path/to/herdr-agent-pool/install.sh
+```
 
-   ```bash
-   claude plugin marketplace add R0drig0V1/herdr-agent-pool      # or /path/to/herdr-agent-pool
-   claude plugin install herdr-agent-pool@herdr-agent-pool --scope project
-   ```
+It does the whole setup and ends with a report of this machine and the steps that are left:
 
-   To try it without installing: `claude --plugin-dir /path/to/herdr-agent-pool/plugin`.
-4. Inside herdr, run `/herdr-agent-pool:setup` once: it checks herdr, the Claude integration
-   and the project, and installs anything only after you confirm.
+- Copies the project-owned files without overwriting: an existing file is kept and listed
+  (`--force` overwrites, without a backup). It never writes through a symbolic link or
+  outside the repository.
+- Enables the plugin in `.claude/settings.json` and sets the plugins it must not run next to,
+  `multi-agent@claude-code-multi-agent` and `multi-agent-herdr@claude-code-herdr`, to `false`
+  there.
+- Installs the plugin for the project with the `claude` CLI when it is not installed yet
+  (`--no-plugin` skips that). Without the CLI it prints the two commands:
+  `claude plugin marketplace add R0drig0V1/herdr-agent-pool` and
+  `claude plugin install herdr-agent-pool@herdr-agent-pool --scope project`.
+- Checks `jq`, `python3`, `gh`, herdr and herdr's Claude integration. It never installs
+  herdr; when the integration is missing it asks before running
+  `herdr integration install claude`.
+- `--dry-run` previews everything, asks nothing and changes nothing.
+
+What is left is yours: fill in the TODOs of `CLAUDE.md`, put your checks in
+`scripts/check.sh`, commit, and launch the integrator inside herdr with
+`scripts/integrator.sh` (pool mode: `scripts/coordinator.sh`). `/herdr-agent-pool:setup` runs
+the same checks from inside Claude Code later (after a plugin update, or to diagnose a
+project) and reviews the project's CI; it is not a required step.
+
+To try the plugin without installing: `claude --plugin-dir /path/to/herdr-agent-pool/plugin`.
+
+**"Plugin not found in marketplace".** The plugin id ends in the marketplace name, so the
+marketplace must be registered as `herdr-agent-pool`. A machine that already knows this
+GitHub repository under another name (it was set up before the rename, or the user's
+`~/.claude/settings.json` declares it so in `extraKnownMarketplaces`) answers
+`claude plugin marketplace add R0drig0V1/herdr-agent-pool` with "already on disk" and adds
+nothing, and the install then fails with "not found in marketplace". The installer detects
+this, names the other marketplace and asks before removing it; removing a marketplace also
+uninstalls, on that machine, the plugins installed from it. By hand
+(`claude plugin marketplace list` shows the name):
+
+```bash
+claude plugin marketplace remove <the other name>
+claude plugin marketplace add R0drig0V1/herdr-agent-pool
+claude plugin install herdr-agent-pool@herdr-agent-pool --scope project
+```
 
 **Scope.** A project-scope install lives in that repository's `.claude/settings.json`. With a
 user-scope install the skills are listed everywhere, but the guard and SessionStart hooks only
@@ -207,7 +236,10 @@ Every name changed, and **the old names are no longer read**:
 
 Moving a machine and a project over, with every session of the project stopped:
 
-1. **The plugin**:
+1. **The plugin and the project**: rerun `install.sh` in the project. It enables the new id,
+   sets the old one to `false`, and installs the plugin. On a machine that still has the
+   `claude-code-herdr` marketplace pointing at this repository it asks before removing it
+   (Install, "Plugin not found in marketplace"); the same by hand:
    ```bash
    claude plugin uninstall multi-agent-herdr@claude-code-herdr
    claude plugin marketplace remove claude-code-herdr
@@ -216,9 +248,8 @@ Moving a machine and a project over, with every session of the project stopped:
    ```
    If you also use the two-level plugin elsewhere, add its marketplace again from
    `R0drig0V1/claude-code-herdr`.
-2. **The project**: rerun `install.sh` (it enables the new id and sets the old one to
-   `false`), `git mv .claude/multi-agent-herdr.json .claude/herdr-agent-pool.json`, and
-   replace `/multi-agent-herdr:` with `/herdr-agent-pool:` and `MULTI_AGENT_HERDR_` with
+2. **The project's names**:
+   `git mv .claude/multi-agent-herdr.json .claude/herdr-agent-pool.json`, and replace `/multi-agent-herdr:` with `/herdr-agent-pool:` and `MULTI_AGENT_HERDR_` with
    `HERDR_AGENT_POOL_` in `CLAUDE.md`, `.claude/prompts/` and the project's scripts.
 3. **The state**: rename `<git common dir>/multi-agent-herdr` to `herdr-agent-pool`, and the
    same under `~/.config` and `~/.cache`. Otherwise the pool starts empty: no claims, no
