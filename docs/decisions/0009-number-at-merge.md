@@ -38,4 +38,15 @@ tree.
 - No task waits on another one's number, and no question to the user.
 - A reference the rewrite rule does not recognise (an unpadded `ADR 1`, a bare number in
   prose) keeps the old number; only the project's check can catch it.
+
+## Amendment: mentions by kind (2026-11-19)
+
+Benchmark runs 7 and 9: an ADR renumbered at merge kept its mentions as "ADR 0001" in a
+docstring, the README table, `CHANGELOG.md` and a test name, since those lines hold neither
+the file name nor its slug. Run 7 bounced a PR to make its mentions safe; in run 9 the
+integrator asked for a follow-up PR, whose change of the shared files then failed another
+PR's verification. `renumber.py` now also rewrites the old number in the PR's added lines
+when the kind's name precedes it (`ADR 0001`, `adr_0001`, `ADRs-0001`). Such a line can only
+mean the PR's own file: the number was free on the author's base. Authors need no rule about
+how to write a mention.
 - The number an author used may change at merge; the merge commit says so.

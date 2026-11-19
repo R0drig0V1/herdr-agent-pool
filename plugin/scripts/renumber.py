@@ -21,8 +21,12 @@ group, the number}, matched against whole paths):
   old number (no letter or digit on either side) is replaced only in lines the PR adds, and
   only in a line that also contains the file's slug (the name without number and
   extension), in a table row (`|`-delimited) of an index file (a changed file that is not a
-  numbered file, in the numbered file's directory or its parent), or in a heading (`#`) of
-  the renamed file itself.
+  numbered file, in the numbered file's directory or its parent), in a heading (`#`) of
+  the renamed file itself, or in a line that names it by its kind: the kind's name (any
+  case, optionally plural) right before the old number, separated by one space, `-`, `_`
+  or `#` (`ADR 0001`, `adr_0001`, `Migration-0003`). A line the PR adds that names
+  the old number by its kind means the PR's own file: on the PR's base that number was
+  free, which is why the author took it.
 * A table whose numbered rows were in ascending order, apart from the rewritten ones, is
   sorted again by number.
 
@@ -151,12 +155,19 @@ def is_index(path: str, r: Rename, kinds: dict[str, str]) -> bool:
     return os.path.dirname(path) in (here, os.path.dirname(here))
 
 
+def names_kind(line: str, r: Rename) -> bool:
+    """The line names the old number by the kind (`ADR 0001`, `adr_0001`, `ADRs-0001`)."""
+    kind = re.escape(r.kind)
+    pattern = rf"(?<![{WORD}]){kind}s?[ _#-]{r.old_num}(?![{WORD}])"
+    return re.search(pattern, line, re.IGNORECASE) is not None
+
+
 def number_map(path: str, line: str, renames: list[Rename], kinds: dict[str, str]) -> dict:
     """{old number: new number} for the bare numbers this added line may have rewritten."""
     out: dict[str, str | None] = {}
     for r in renames:
         ok = (r.slug and r.slug in line) or (is_row(line) and is_index(path, r, kinds))
-        ok = ok or (path == r.new and line.lstrip().startswith("#"))
+        ok = ok or (path == r.new and line.lstrip().startswith("#")) or names_kind(line, r)
         if ok:
             out[r.old_num] = r.new_num if out.get(r.old_num, r.new_num) == r.new_num else None
     return {k: v for k, v in out.items() if v is not None}

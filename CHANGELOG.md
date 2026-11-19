@@ -21,6 +21,9 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   - the `sessions_guideline` counts working agents only: idle and done sessions (often of
     other repositories) no longer block a dispatch or make the dispatcher ask the user, and
     working agents over the guideline are reported, not a stop; only low memory stops it;
+  - renumbering at merge also rewrites the lines of the PR that name the number by its kind
+    (`ADR 0001`, `adr_0001`), not only the file name, links and index rows, so a renumbered
+    ADR leaves no stale mention behind and needs no follow-up PR (decision 0009);
   - the `pr` skill fetches with `--prune` before rebasing and after a rejected push of a new
     branch, so a stale `origin/<branch>` is not mistaken for someone else's branch.
 - Numbered files (`numbered_files`: migrations, ADRs) are numbered at merge time, not at

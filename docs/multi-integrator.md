@@ -234,7 +234,9 @@ in its one group), numbers are given **at merge time**:
    the PR changed, and nowhere else, the old name without its extension becomes the new one;
    the bare old number is replaced only in lines the PR adds that also contain the file's
    slug, are table rows (`|`) of an index file (a non-numbered file in the numbered file's
-   directory or its parent), or are a heading of the renamed file itself. A numbered table
+   directory or its parent), are a heading of the renamed file itself, or name the number by
+   its kind (`ADR 0001`, `adr_0001`: the kind's name, any case, then one space, `-`, `_` or
+   `#`). A numbered table
    that was sorted is sorted again. One `RENUMBERED <kind> <old> -> <new>` line per rename
    is printed and added to the merge commit message.
 3. The verification runs on the renumbered tree, so a bad rewrite fails the check instead of

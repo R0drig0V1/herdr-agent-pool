@@ -124,7 +124,8 @@ lock, each step gated on the previous exit code.
 Add `--union-rows <file>` only for an index table (e.g. `docs/decisions/README.md`) where two
 PRs add rows. The script refuses rows that share a key (the same ADR number twice) unless
 renumbering changes one: with `numbered_files` set, the PR's numbered files are renumbered
-automatically (`RENUMBERED` lines, verified with the merge); nothing to do unless it fails.
+automatically, with their links and mentions (`ADR 0001`) in the PR's lines (`RENUMBERED`
+lines, verified with the merge); nothing to do unless it fails: no follow-up PR for them.
 
 **The exit code is the verdict.** Never decide by grepping output for "passed".
 

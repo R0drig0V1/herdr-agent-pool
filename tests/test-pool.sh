@@ -811,6 +811,18 @@ integrate 35 --union-rows docs/adr/README.md
 check "renumber: a renumbered PR whose check fails bounces (exit 4)" \
     bash -c '[[ $1 == 4 && "$2" == *"RENUMBERED adr docs/adr/0001-bad.md -> docs/adr/0006-bad.md"* ]]' _ "$rc" "$out"
 check "renumber: the worktree is clean after it (renamed files included)" clean_wt
+adr_pr 36 feat/adr-kindref 0001 kindref   # main has 0001-0005: becomes 0006
+mkdir -p "$dev/src" && printf 'See ADR 0001.\nADR_0001_CASES = 1\nadrs-0001 too\nRow 0001 stays.\nMADR 0001 stays.\n' > "$dev/src/kindref.txt"
+printf -- '- kindref (ADR 0001)\n' > "$dev/CHANGES.md"
+git -C "$dev" add -A && git -C "$dev" commit --quiet -m "kindref refs" \
+    && git -C "$dev" push --quiet origin feat/adr-kindref && pr_json 36 feat/adr-kindref
+integrate 36 --union-rows docs/adr/README.md
+check "renumber: a PR whose lines name the ADR by its kind merges as 0006" \
+    bash -c '[[ $1 == 0 && "$2" == *"RENUMBERED adr docs/adr/0001-kindref.md -> docs/adr/0006-kindref.md"* ]]' _ "$rc" "$out"
+check "renumber: ADR 0001, ADR_0001 and adrs-0001 in its lines become 0006; other 0001s stay" \
+    [ "$(main_show src/kindref.txt)" == "$(printf 'See ADR 0006.\nADR_0006_CASES = 1\nadrs-0006 too\nRow 0001 stays.\nMADR 0001 stays.')" ]
+check "renumber: the kind reference in another changed file is rewritten" \
+    [ "$(main_show CHANGES.md)" == "- kindref (ADR 0006)" ]
 printf '%s\n' "$cfg_saved" > "$cfg_json"
 adr_pr 34 feat/adr-dup 0001 dup
 integrate 34
