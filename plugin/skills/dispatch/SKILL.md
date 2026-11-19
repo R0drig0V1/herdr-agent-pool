@@ -116,7 +116,8 @@ wait with `herdr agent wait "$NAME" --until idle --timeout 600000`, then continu
 
 - The task will add a file of a `numbered_files` kind (a migration, an ADR;
   `"${CLAUDE_PLUGIN_ROOT}/scripts/project-config.py" numbered_files` prints the kinds, `{}`
-  when none): first reserve its number as `references/numbered-files.md` says.
+  when none): reserve nothing; add the brief's numbered-files line
+  (`references/numbered-files.md`).
 - Build `$BRIEF` from the template in `references/brief.md` (read it once per session).
 
 Submit it and confirm the agent picked it up (never `--wait` alone: it blocks until the task

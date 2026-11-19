@@ -11,6 +11,16 @@ All notable changes to this project are documented here. The format follows
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- Numbered files (`numbered_files`: migrations, ADRs) are numbered at merge time, not at
+  dispatch. Authors take the next free number on their own base, so their checks pass, and
+  `integrate-pr.sh` (new `renumber.py`) moves a PR's new files to the next free numbers on
+  the base it merges onto, rewrites their names, index rows and links in the PR's files,
+  prints one `RENUMBERED` line per rename (also in the merge commit message) and verifies
+  the renumbered tree; re-merges onto a moved base renumber again. `union-rows.py` keeps two
+  index rows with a number being renumbered (`--allow-key`). The `dispatch` skill no longer
+  reserves numbers; `pool-state.py reserve` still works but is not used by it. In a measured
+  run, a reserved 0002 failed a "contiguous from 0001" check while 0001 was unfinished, and
+  the agent stopped to ask the user.
 - `install.sh` is now the whole per-repository setup, one command instead of three steps. It
   installs the plugin for the project with the `claude` CLI when it is not installed yet
   (`--no-plugin` skips it), checks `jq`, `python3`, `gh`, herdr and herdr's Claude

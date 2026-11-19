@@ -28,7 +28,11 @@
 #     against the base branch from this repository, and origin/<branch> equal to the PR's head.
 #  2. Start from origin/<base> (pool: detached checkout; single: fast-forward of <base>), then
 #     `git merge --no-ff --no-commit` the PR head. A conflict stops it (exit 3), unless every
-#     conflicted file was given with --union-rows and union-rows.py resolves it.
+#     conflicted file was given with --union-rows and union-rows.py resolves it. Then, with
+#     `numbered_files` set, renumber.py moves the numbered files the PR adds to the next free
+#     numbers on this base and rewrites their names in the PR's files (one
+#     `RENUMBERED <kind> <old> -> <new>` line each, also in the merge commit message); a
+#     re-merge onto a moved base renumbers again.
 #  3. verify-merge.sh (--here in pool mode), output in a log file; the exit code is the
 #     verdict. A failure aborts the merge and resets the verification state (exit 4). check.sh
 #     must not change tracked files (that is a failure too).
@@ -69,6 +73,37 @@ here_dir=$(cd "$(dirname "$0")" && pwd)
 pc="$here_dir/project-config.py"
 ps="$here_dir/pool-state.py"
 
+# Shared by both halves, during a merge in progress (HEAD is the base). resolve_rows <paths
+# given with --union-rows, one per line>: each conflicted file among them goes through
+# union-rows.py, which may keep two index rows with a number renumber.py is about to change;
+# exit 0 when no conflict is left.
+resolve_rows() {
+    local f k keys=()
+    if [[ -n "${IPR_NUMBERED:-}" && "$IPR_NUMBERED" != "{}" ]]; then
+        while IFS= read -r k; do [[ -z "$k" ]] || keys+=(--allow-key "$k"); done \
+            < <("$here_dir/renumber.py" keys --kinds "$IPR_NUMBERED")
+    fi
+    while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        if grep -qxF -- "$f" <<<"$1" && "$here_dir/union-rows.py" ${keys[@]+"${keys[@]}"} "$f"; then
+            git add -- "$f"; echo "resolved $f mechanically (union of table rows)"
+        else
+            echo "conflict: $f" >&2
+        fi
+    done < <(git diff --name-only --diff-filter=U)
+    [[ -z "$(git diff --name-only --diff-filter=U)" ]]
+}
+# renumber_merge <message file>: renumber the PR's numbered files (renumber.py apply), print
+# its RENUMBERED lines and write the message: <message file>.head plus those lines.
+renumber_merge() {
+    local out=""
+    if [[ -n "${IPR_NUMBERED:-}" && "$IPR_NUMBERED" != "{}" ]]; then
+        out=$("$here_dir/renumber.py" apply --kinds "$IPR_NUMBERED") || return 1
+    fi
+    { cat "$1.head"; [[ -z "$out" ]] || printf '\n%s\n' "$out"; } > "$1"
+    [[ -z "$out" ]] || printf '%s\n' "$out"
+}
+
 # Under the merge lock: re-entered through `pool-state.py lock run -- integrate-pr.sh
 # --push-under-lock`, with the state of the outer run in the environment (exported below).
 # Every failure has its own exit code (no `set -e`, which would turn them all into 1).
@@ -79,8 +114,14 @@ if [[ "${1:-}" == --push-under-lock ]]; then
         if [[ "$IPR_MODE" == pool ]]; then git checkout --quiet --detach "$1" || fail 6 "cannot check out $1"
         else git reset --quiet --hard "$1" || fail 6 "cannot reset to $1"; fi
         if ! git merge --quiet --no-ff --no-commit "$IPR_HEAD_SHA" >/dev/null 2>&1; then
+            if ! resolve_rows "$IPR_UNION" || ! git diff --cached --check >/dev/null 2>&1; then
+                git merge --abort 2>/dev/null
+                fail 3 "the PR no longer merges cleanly onto $1"
+            fi
+        fi
+        if ! renumber_merge "$IPR_MSG"; then
             git merge --abort 2>/dev/null
-            fail 3 "the PR no longer merges cleanly onto $1"
+            fail 3 "the PR's numbered files could not be renumbered on $1 (renumber.py failed)"
         fi
     }
     # The project's scripts/reverify-needed.sh <verified base> <new base> <PR head>, taken from
@@ -186,6 +227,7 @@ base=$(jq -r .base_branch <<<"$config")
 max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
 exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
 locked_minutes=$(jq -r '.integrators.locked_reverify_minutes // 60' <<<"$config")
+export IPR_NUMBERED; IPR_NUMBERED=$(jq -c '.numbered_files // {}' <<<"$config")
 if [[ "$mode" == pool ]]; then me="${HERDR_AGENT_POOL_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
 [[ -n "$me" ]] || { echo "pool mode: HERDR_AGENT_POOL_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
@@ -287,21 +329,17 @@ base_sha=$(git rev-parse HEAD)
 if git merge-base --is-ancestor "$head" "$base_sha"; then
     requeue nothing-to-merge 9 "${head:0:12} is already in origin/$base"
 fi
+export IPR_UNION; IPR_UNION=$(printf '%s\n' ${union[@]+"${union[@]}"})
 if ! git merge --quiet --no-ff --no-commit "$head" >/dev/null 2>&1; then
-    while IFS= read -r f; do
-        [[ -n "$f" ]] || continue
-        mechanical=false
-        for u in ${union[@]+"${union[@]}"}; do [[ "$f" == "$u" ]] && mechanical=true; done
-        if $mechanical && "$here_dir/union-rows.py" "$f"; then
-            git add -- "$f"; echo "resolved $f mechanically (union of table rows)"
-        else
-            echo "conflict: $f" >&2
-        fi
-    done < <(git diff --name-only --diff-filter=U)
+    resolve_rows "$IPR_UNION"
     remaining=$(git diff --name-only --diff-filter=U)
     [[ -z "$remaining" ]] || finish_bounce conflict 3 "conflicts with origin/$base in: ${remaining//$'\n'/ }"
     git diff --cached --check >/dev/null 2>&1 || finish_bounce conflict 3 "conflict markers left after resolution"
 fi
+# Number at merge: the PR's numbered files take the next free numbers on this base.
+msg="$git_dir/herdr-agent-pool-merge-msg-$N"
+printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg.head"
+renumber_merge "$msg" || finish_bounce conflict 3 "the PR's numbered files could not be renumbered (renumber.py failed)"
 
 # 3. Verify, heartbeating the claim meanwhile (a verification can take longer than a TTL).
 log="$git_dir/herdr-agent-pool-verify-$N.log"
@@ -351,8 +389,6 @@ verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, r
 }
 verified_or_out "origin/$base"
 
-msg="$git_dir/herdr-agent-pool-merge-msg-$N"
-printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg"
 export IPR_BASE="$base" IPR_MODE="$mode" IPR_HEAD_SHA="$head" IPR_EXEMPT="$exempt" IPR_MSG="$msg"
 export IPR_PS="$ps" IPR_N="$N" IPR_ME="$me"
 export IPR_STATE="$git_dir/herdr-agent-pool-newbase-$N"
@@ -418,7 +454,7 @@ if [[ "$remote_now" == "$head" && "$pr_head" == "$head" ]] && git merge-base --i
 fi
 [[ "$branch" == kept ]] && echo "branch $B KEPT: remote ${remote_now:-?}, PR head ${pr_head:-?}, merged ${head}; the PR stays open if it has new commits"
 
-# The branch's number reservations (pool-state.py reserve) are spent: its files landed.
+# Number reservations (pool-state.py reserve; dispatch no longer makes them) are spent.
 "$ps" unreserve --owner "$B" >/dev/null 2>&1 || true
 # The fix of a red base (pool-state.py base-red assign --branch) just landed: green again.
 "$ps" base-red clear --owner "$me" --if-branch "$B" --reason "PR #$N ($B), the assigned fix, merged" 2>/dev/null \
@@ -430,6 +466,6 @@ if [[ "$mode" == pool ]]; then
     "$ps" report add "$N" --sha "$merged" --owner "$me" --tasks "$tasks" >/dev/null
     "$ps" release "$N" --owner "$me" >/dev/null
 fi
-rm -f "$msg" "$IPR_STATE"
+rm -f "$msg" "$msg.head" "$IPR_STATE"
 result merged "PR #$N as $merged onto origin/$base; branch $B $branch"
 exit 0

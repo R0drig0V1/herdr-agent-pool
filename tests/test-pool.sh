@@ -3,7 +3,8 @@
 # machine's heavy-slot floor (resource-budget.py) and resource board (resource-board.sh), the
 # guards' role rules, claim-integrator.sh and the SessionStart hook for the coordinator and pool
 # members, agents-in-repo.py's worktree filters, pool-state.py (claim races, stale claims,
-# bounces, the merge lock, plan reports), union-rows.py, integrate-pr.sh end to end, and
+# bounces, the merge lock, plan reports), union-rows.py, integrate-pr.sh end to end (with
+# renumber.py: numbered files renumbered at merge), and
 # integrator-pool.sh (route, scale, spawn, stop) and cleanup-worktree.sh. Part of herdr-agent-pool.
 #
 # Usage: tests/test-pool.sh        (exit code = number of failed cases)
@@ -134,6 +135,13 @@ cd "$(git rev-parse --show-toplevel)"
 [[ -z "${CHECK_COUNT:-}" ]] || echo run >> "$CHECK_COUNT"
 if [[ -n "${CHECK_HOOK:-}" && ! -e "$CHECK_HOOK.done" ]]; then touch "$CHECK_HOOK.done"; "$CHECK_HOOK"; fi
 [[ ! -e fail.txt ]] || { echo "fail.txt is present"; exit 1; }
+i=0   # ADR numbers unique and contiguous from 0001, each one linked from the index
+for f in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+    [[ -e "$f" ]] || continue
+    i=$((i + 1)); n=$(basename "$f")
+    [[ "${n:0:4}" == "$(printf %04d "$i")" ]] || { echo "ADR numbers not contiguous at $n"; exit 1; }
+    grep -qF "]($n)" docs/adr/README.md || { echo "$n is not in the ADR index"; exit 1; }
+done
 echo "checks ok"
 SH
 chmod +x "$proj/scripts/check.sh"
@@ -457,6 +465,8 @@ printf '| ADR | T |\n|---|---|\n| [0001](a) | A |\n<<<<<<< HEAD\n| [0003](c) | C
 check "union-rows: both rows, sorted" bash -c '"$1" "$2" && [[ "$(tail -2 "$2" | cut -c4-7 | tr "\n" ,)" == "0002,0003," ]] && ! grep -q "<<<" "$2"' _ "$ur" "$work/idx.md"
 printf '<<<<<<< HEAD\n| [0002](c) | C |\n=======\n| [0002](b) | B |\n>>>>>>> feat\n' > "$work/clash.md"
 check "union-rows: refuses two rows with one key" bash -c '! "$1" "$2" 2>/dev/null && grep -q "<<<" "$2"' _ "$ur" "$work/clash.md"
+check "union-rows: keeps them with --allow-key (a number renumber.py changes next)" \
+    bash -c '"$1" --allow-key 0002 "$2" && [[ $(grep -c "^| \[0002\]" "$2") == 2 ]]' _ "$ur" "$work/clash.md"
 printf '<<<<<<< HEAD\nsome prose\n=======\n| [0002](b) | B |\n>>>>>>> feat\n' > "$work/prose.md"
 check "union-rows: refuses prose" bash -c '! "$1" "$2" 2>/dev/null' _ "$ur" "$work/prose.md"
 
@@ -701,6 +711,77 @@ check "integrate-pr: merging the assigned fix clears the red base" \
 check "base-red: the held PR is back in the queue" bash -c '[[ "$1" == "24	"* ]]' _ "$(cd "$proj" && "$ps" queue --base main)"
 check "hold: refused while the base is green (exit 1)" exits 1 as_me hold 24 --head "$head24" --owner "$me"
 echo '[]' > "$FAKE_GH/list.json"; agents "$me" w2:p1 idle "$wt1"
+
+# Number at merge (renumber.py, project setting numbered_files) ---------------------------------
+# The test check.sh wants the ADRs in docs/adr numbered 0001, 0002, ... and each one in the index.
+cat > "$cfg_json" <<'JSON'
+{"integrators": {"max": 2, "scale_up_when_active_agents_gt": 2}, "numbered_files": {"adr": "docs/adr/(\\d{4})-.*\\.md"}}
+JSON
+git -C "$pusher" fetch --quiet origin && git -C "$pusher" checkout --quiet -B main origin/main && mkdir -p "$pusher/docs/adr"
+printf '| ADR | Title |\n|---|---|\n' > "$pusher/docs/adr/README.md"
+git -C "$pusher" add -A && git -C "$pusher" commit --quiet -m "adr index" && git -C "$pusher" push --quiet origin main
+adr_pr() {  # adr_pr <N> <branch> <number> <slug>: an ADR, its index row and a guide linking it
+    local n="$1" b="$2" name="$3-$4.md"
+    git -C "$dev" fetch --quiet origin && git -C "$dev" checkout --quiet -B "$b" origin/main
+    printf '# %s. %s\n\nSee also %s.\n' "$3" "$4" "$3-$4" > "$dev/docs/adr/$name"
+    printf '| [%s](%s) | %s |\n' "$3" "$name" "$4" >> "$dev/docs/adr/README.md"
+    printf 'Read [ADR %s](adr/%s).\n' "$3" "$name" > "$dev/docs/guide-$4.md"
+    git -C "$dev" add -A && git -C "$dev" commit --quiet -m "ADR $3" && git -C "$dev" push --quiet origin "$b"
+    pr_json "$n" "$b"
+}
+main_show() { git -C "$origin" show "main:$1"; }
+adr_pr 30 feat/adr-first 0001 first
+adr_pr 31 feat/adr-second 0001 second   # both took 0001 on the same base
+integrate 30 --union-rows docs/adr/README.md
+check "renumber: the first PR keeps 0001" \
+    bash -c '[[ $1 == 0 && "$2" != *RENUMBERED* ]]' _ "$rc" "$out"
+integrate 31 --union-rows docs/adr/README.md
+check "renumber: the second PR's 0001 becomes 0002, verified (contiguous) and merged" \
+    bash -c '[[ $1 == 0 && "$2" == *"RENUMBERED adr docs/adr/0001-second.md -> docs/adr/0002-second.md"* && "$2" == *"RESULT merged"* ]]' _ "$rc" "$out"
+check "renumber: the file is renamed on main" on_main docs/adr/0002-second.md
+check "renumber: the old name is gone"        not on_main docs/adr/0001-second.md
+check "renumber: the index row is rewritten" \
+    [ "$(main_show docs/adr/README.md | tail -2)" == "$(printf '| [0001](0001-first.md) | first |\n| [0002](0002-second.md) | second |')" ]
+check "renumber: the link in a changed file is rewritten" \
+    [ "$(main_show docs/guide-second.md)" == "Read [ADR 0002](adr/0002-second.md)." ]
+check "renumber: the heading and the name inside the ADR are rewritten" \
+    [ "$(main_show docs/adr/0002-second.md)" == "$(printf '# 0002. second\n\nSee also 0002-second.')" ]
+check "renumber: the merge commit message lists the rename" \
+    bash -c 'git -C "$1" log -1 --format=%B main | grep -qx "RENUMBERED adr docs/adr/0001-second.md -> docs/adr/0002-second.md"' _ "$origin"
+adr_pr 32 feat/adr-third 0003 third
+integrate 32 --union-rows docs/adr/README.md
+check "renumber: a PR that took the next free number is untouched" \
+    bash -c '[[ $1 == 0 && "$2" != *RENUMBERED* ]]' _ "$rc" "$out"
+check "renumber: its file is on main as it was" on_main docs/adr/0003-third.md
+adr_pr 33 feat/adr-fourth 0004 fourth
+cat > "$work/hook-adr.sh" <<HOOK
+#!/usr/bin/env bash
+git -C "$pusher" fetch --quiet origin && git -C "$pusher" checkout --quiet -B main origin/main
+printf '# 0004. other\n' > "$pusher/docs/adr/0004-other.md"
+printf '| [0004](0004-other.md) | other |\n' >> "$pusher/docs/adr/README.md"
+git -C "$pusher" add -A && git -C "$pusher" commit --quiet -m "adr 0004" && git -C "$pusher" push --quiet origin main
+HOOK
+chmod +x "$work/hook-adr.sh"; export CHECK_HOOK="$work/hook-adr.sh"
+integrate 33 --union-rows docs/adr/README.md
+check "renumber: a re-merge onto a moved base renumbers again (0004 -> 0005) and re-verifies" \
+    bash -c '[[ $1 == 0 && "$2" == *"RENUMBERED adr docs/adr/0004-fourth.md -> docs/adr/0005-fourth.md"* && $3 == 2 && "$4" == "$5" ]]' \
+    _ "$rc" "$out" "$(runs 33)" "$(main_show docs/adr/README.md | tail -2)" \
+    "$(printf '| [0004](0004-other.md) | other |\n| [0005](0005-fourth.md) | fourth |')"
+check "renumber: both 0004 and 0005 are on main" bash -c '[[ -n "$1" && -n "$2" ]]' _ \
+    "$(main_show docs/adr/0004-other.md)" "$(main_show docs/adr/0005-fourth.md)"
+adr_pr 35 feat/adr-bad 0001 bad
+echo boom > "$dev/fail.txt" && git -C "$dev" add -A && git -C "$dev" commit --quiet -m boom \
+    && git -C "$dev" push --quiet origin feat/adr-bad && pr_json 35 feat/adr-bad
+integrate 35 --union-rows docs/adr/README.md
+check "renumber: a renumbered PR whose check fails bounces (exit 4)" \
+    bash -c '[[ $1 == 4 && "$2" == *"RENUMBERED adr docs/adr/0001-bad.md -> docs/adr/0006-bad.md"* ]]' _ "$rc" "$out"
+check "renumber: the worktree is clean after it (renamed files included)" clean_wt
+printf '%s\n' "$cfg_saved" > "$cfg_json"
+adr_pr 34 feat/adr-dup 0001 dup
+integrate 34
+check "renumber: without numbered_files nothing is renumbered (the check catches the duplicate)" \
+    bash -c '[[ $1 == 4 && "$2" != *RENUMBERED* && "$2" == *"not contiguous"* ]]' _ "$rc" "$out"
+check "renumber: the worktree is clean after that bounce" clean_wt
 
 make_pr 10 feat/ten src/ten.txt ten
 out=$(cd "$wt1" && env CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NAME="$me" HERDR_ENV=1 FAKE_PANE=w2:p1 HERDR_PANE_ID=w2:p1 "$ipr" 10 2>&1); rc=$?

@@ -10,13 +10,16 @@ row). It is the only conflict the integrator resolves itself, because it is mech
   sorted by their text (index rows start with their key, e.g. `| [0042](0042-x.md) | ...`);
 * two different rows with the same key (the first cell, or the label of the link that starts
   it: two PRs that both took ADR 0042) are a
-  numbering collision, not a mechanical conflict: the file is left untouched.
+  numbering collision, not a mechanical conflict: the file is left untouched, unless the key
+  was given with `--allow-key` (integrate-pr.sh passes the numbers renumber.py is about to
+  change: the PR's row is rewritten to its new number right after).
 
 Anything else (a hunk with prose, an unterminated marker) also leaves the file untouched.
 Handles the `diff3` / `zdiff3` conflict styles (the `|||||||` base section is dropped).
 
-Usage: union-rows.py PATH        Exit codes: 0 resolved (file rewritten); 1 not mechanical
-(reason on stderr, file unchanged); 2 usage or I/O error. Python 3.9 compatible.
+Usage: union-rows.py [--allow-key KEY]... PATH
+Exit codes: 0 resolved (file rewritten); 1 not mechanical (reason on stderr, file unchanged);
+2 usage or I/O error. Python 3.9 compatible.
 """
 
 from __future__ import annotations
@@ -38,19 +41,19 @@ def first_cell(row: str) -> str:
     return link.group(1) if link else cell
 
 
-def union(ours: list[str], theirs: list[str]) -> list[str]:
+def union(ours: list[str], theirs: list[str], allowed: frozenset[str] = frozenset()) -> list[str]:
     rows = [r for r in ours + theirs if r.strip()]
     if not all(r.lstrip().startswith("|") for r in rows):
         raise NotMechanical("a conflict hunk contains lines that are not table rows")
     unique = sorted(set(rows))
     keys = [first_cell(r) for r in unique]
-    clashes = sorted({k for k in keys if keys.count(k) > 1})
+    clashes = sorted({k for k in keys if keys.count(k) > 1 and k not in allowed})
     if clashes:
         raise NotMechanical(f"two different rows share the key {', '.join(clashes)}")
     return unique
 
 
-def resolve(lines: list[str]) -> list[str]:
+def resolve(lines: list[str], allowed: frozenset[str] = frozenset()) -> list[str]:
     out: list[str] = []
     i = 0
     while i < len(lines):
@@ -72,16 +75,20 @@ def resolve(lines: list[str]) -> list[str]:
             i += 1
         if i == len(lines):
             raise NotMechanical("unterminated conflict marker")
-        out.extend(union(sides["ours"], sides["theirs"]))
+        out.extend(union(sides["ours"], sides["theirs"], allowed))
         i += 1  # the >>>>>>> line
     return out
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: union-rows.py PATH", file=sys.stderr)
+    args, allowed = sys.argv[1:], set()
+    while len(args) > 2 and args[0] == "--allow-key":
+        allowed.add(args[1])
+        args = args[2:]
+    if len(args) != 1:
+        print("usage: union-rows.py [--allow-key KEY]... PATH", file=sys.stderr)
         return 2
-    path = sys.argv[1]
+    path = args[0]
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -89,7 +96,7 @@ def main() -> int:
         print(f"union-rows: {exc}", file=sys.stderr)
         return 2
     try:
-        resolved = resolve(lines)
+        resolved = resolve(lines, frozenset(allowed))
     except NotMechanical as exc:
         print(f"union-rows: {path}: {exc}", file=sys.stderr)
         return 1
