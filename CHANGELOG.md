@@ -57,6 +57,17 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   every time (README, "Rules"; the project template's CLAUDE.md; the `integrate` and `pr`
   skills). `integrate-pr.sh` refuses such a PR (exit 2) unless it gets
   `--author-ok <the PR's author>`.
+- `land.py`, the lander (docs/lander.md): phase 1 of coordination through GitHub state. One
+  run, in a per-base concurrency group, drains the PRs labelled `queue` oldest first; gates
+  on draft, CI of the head commit, approval of the head commit (a person's for `risk:high`)
+  and an open `base-red` issue; merges `--no-ff`, runs the full check on the merge and
+  pushes it unforced, merging again when the base moved. Conflicts and red checks bounce
+  with a counted comment, and the one over `--max-rounds` adds `needs-human`. The queue label
+  is the approval by default (`--approval review` also asks for an approving review, and a
+  person's for `risk:high`); PRs from forks are not landed. `--watch SECONDS` keeps it
+  running in a terminal, without GitHub Actions. `--dry-run` is
+  a shadow mode. Reference workflow in docs/workflows/land.yml; tests in
+  tests/test-lander.sh, run by CI.
 - `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
   a known limitation or an open question), after a duplicate search: evidence, verifiable
   acceptance criteria, scope, risk, size and `Depends on`, using only existing labels and

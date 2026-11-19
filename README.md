@@ -337,6 +337,7 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Script | `resource-budget.py` | The hard floor: at most `heavy_slots` heavy commands at once on the machine, in a priority queue (`run`), holders and waiters (`status`), and the limits (`limits`) |
 | Script | `resource-board.sh` | The shared resource sheet: agents `note` and `clear` what they run; `show` prints memory, slots, notes and idle agents |
 | Script | `cleanup-worktree.sh` | After a merge: `--list` the development worktrees and their state; `<branch>` closes the agent's workspace, removes the worktree and deletes the branches, only when merged (a merged PR, tip in the base), clean and idle |
+| Script | `land.py` | The lander of the GitHub Actions design (phase 1): drains the PRs labelled `queue` in a workflow, checks CI, approvals, `risk:high` and `base-red`, verifies each merge and pushes it; conflicts and red checks bounce, counted up to `needs-human` ([docs/lander.md](docs/lander.md)) |
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys) |
 
 Each skill's `SKILL.md` holds the normal path only: preconditions, the steps with their
