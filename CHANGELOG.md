@@ -38,6 +38,10 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   skill describe the same fix by hand.
 - `install.sh` reports the `claude` CLI's own reason when it refuses to install the plugin,
   and does not take a project-scope install of another repository for this one's.
+- Rule: ask the user before working on a pull request that another GitHub account opened,
+  every time (README, "Rules"; the project template's CLAUDE.md; the `integrate` and `pr`
+  skills). `integrate-pr.sh` refuses such a PR (exit 2) unless it gets
+  `--author-ok <the PR's author>`.
 - `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
   a known limitation or an open question), after a duplicate search: evidence, verifiable
   acceptance criteria, scope, risk, size and `Depends on`, using only existing labels and

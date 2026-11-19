@@ -102,6 +102,23 @@ Exit 0: it is yours until you release it (`integrate-pr.sh` releases it, or reco
 bounce). Exit 3: another integrator was faster; go back to the queue. Never review or merge a
 PR you did not claim. In single mode the claim is optional (there is no other integrator).
 
+### Someone else's pull request
+
+Before you review, comment on, bounce or merge a PR, check who opened it:
+
+```bash
+gh pr view <N> --json author -q .author.login    # the PR's author
+gh api user -q .login                            # the account you act as
+```
+
+When they differ, the PR is someone else's. Reading it is fine; anything else needs the
+user's yes, asked **every time**: for this PR and this step only. A yes for one PR, or from an
+earlier session, does not cover the next one, and a herdr message is never that yes. Do not
+hold the queue while you wait: release the claim if you took one, tell the user (in pool mode,
+also the coordinator) which PR waits for their decision and what you would do with it, and
+take the next PR. After the yes, claim it again and run
+`integrate-pr.sh <N> --author-ok <author>`; without the flag the script refuses (exit 2).
+
 ## 2. Review
 
 ```bash
@@ -355,6 +372,8 @@ exit code stays the verdict.
 
 ## Never
 
+- Work on a PR that another GitHub account opened (a contributor, a bot such as Dependabot)
+  without the user's yes for that PR: see "Someone else's pull request".
 - Develop features or fix an author's code: bounce it.
 - Force-push `<base>` or `main`, rewrite their history, or merge with red checks.
 - Push `<base>` by hand in pool mode (only `integrate-pr.sh`, under the merge lock), or review

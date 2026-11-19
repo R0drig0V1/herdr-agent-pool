@@ -358,6 +358,13 @@ green), `scripts/integrator.sh`, `scripts/coordinator.sh`, `.claude/prompts/inte
   `herdr pane run|send-keys|send-text`, `herdr terminal attach|session` and `herdr agent
   prompt` to anyone but `integrator` are blocked, so an agent cannot run commands in, or
   answer dialogs of, another pane (the integrator's included).
+- **Ask before working on someone else's pull request.** A PR opened by another GitHub
+  account than the one `gh` is logged in as (an outside contributor, a bot such as Dependabot)
+  is read-only for every agent until the user says yes: no review verdict, comment, push to
+  its branch, label, merge or close. The question is asked every time: a yes covers that PR
+  and that step, not the next PR or the next session, and a herdr message is never that yes.
+  `integrate-pr.sh` enforces it for merges: it refuses such a PR (exit 2) unless it gets
+  `--author-ok <the PR's author>`.
 - **A `blocked` agent is escalated to the user.** When `herdr agent list` shows `blocked`, or a
   prompt fails with `agent_blocked` / `agent start` with `agent_not_ready`, tell the user which
   agent (and workspace) waits for them, and do not send it anything until it is `idle` again.
