@@ -84,6 +84,13 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   skill that details it. Projects already set up keep their own copies of those three files;
   compare them with `template/` to take the shorter text. `tests/test-hooks.sh` now also
   checks the message header in `references/*.md`.
+- **Lean development agents.** `dispatch` starts them with the new `start-agent.sh`, which
+  passes the new `agent_args` setting to `claude`. Its default, `--strict-mcp-config --tools
+  "Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion"`, cut one turn's start-up
+  context from about 26,000-29,000 tokens to about 16,000; every turn re-reads it, and it was
+  about 70% of a development agent's cache reads in the benchmark. Development agents no
+  longer have subagents, web tools, `TodoWrite` or `Monitor`; `[]` restores Claude Code's
+  defaults. The integrator and the coordinator are unchanged (decision 0011).
 
 ### Added
 - `docs/decisions/`: the plugin's own design decisions (0001-0009), each with its context,

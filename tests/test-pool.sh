@@ -65,6 +65,7 @@ cat > "$fake/herdr" <<'FAKE'
 #!/usr/bin/env bash
 # Fake herdr: `agent list` prints $FAKE_AGENTS; `pane current` reports $FAKE_PANE; mutating
 # commands are logged to $FAKE_LOG (one line each). $FAKE_HERDR_DOWN makes every call fail.
+# `agent start` also writes its arguments to $FAKE_ARGV, one per line, when it is set.
 [[ -z "${FAKE_HERDR_DOWN:-}" ]] || { echo "herdr: no server" >&2; exit 1; }
 case "$1 $2" in
     "agent list") cat "$FAKE_AGENTS" ;;
@@ -76,6 +77,7 @@ case "$1 $2" in
         echo '{"result":{"workspace":{"workspace_id":"w9"},"root_pane":{"pane_id":"w9:p1"}}}' ;;
     "workspace close") echo "workspace-close $3" >> "$FAKE_LOG"; echo '{"result":{}}' ;;
     "agent start") shift 2; echo "agent-start $*" >> "$FAKE_LOG"
+        [[ -z "${FAKE_ARGV:-}" ]] || printf '%s\n' "$@" > "$FAKE_ARGV"
         [[ "${FAKE_START_RC:-0}" == 0 ]] || { echo '{"error":{"code":"agent_not_ready"}}'; exit 1; } ;;
     "agent prompt") printf 'prompt %s %s\n' "$3" "$(head -1 <<<"$4")" >> "$FAKE_LOG" ;;
     *) exit 2 ;;
@@ -1201,6 +1203,38 @@ agents   # member 2 is down: spawn it again, then stop it for good
 agents integrator-proj-2 w9:p1 idle "$wt2"
 (cd "$proj" && env HERDR_ENV=1 "$pool" stop 2 --remove-worktree >/dev/null 2>&1); status=$?
 check "pool stop --remove-worktree: discards the verify worktree" bash -c '[[ $1 == 0 && ! -d "$2" ]] && ! git -C "$3" worktree list | grep -q integrator-2' _ "$status" "$wt2" "$proj"
+
+# start-agent.sh: the dispatch skill's `herdr agent start`, with agent_args after `--` --------
+sa="$scripts/start-agent.sh"; sa_repo="$work/start-agent"; argv="$work/start-agent.argv"
+git init --quiet -b main "$sa_repo"; mkdir -p "$sa_repo/.claude"
+start_agent() {  # start_agent <agent_args JSON|->: run start-agent.sh (- = no file), print its exit code
+    local json="$1"
+    if [[ "$json" == - ]]; then rm -f "$sa_repo/.claude/herdr-agent-pool.json"
+    else printf '{"agent_args": %s}\n' "$json" > "$sa_repo/.claude/herdr-agent-pool.json"; fi
+    rm -f "$argv"
+    (cd "$sa_repo" && FAKE_ARGV="$argv" "$sa" dev1 w4:p1 >/dev/null 2>&1); echo $?
+}
+started_with() {  # started_with <exit code> <arg...>: exit 0 and `herdr agent start` got exactly these
+    local status="$1"; shift
+    [[ $status == 0 && "$(cat "$argv" 2>/dev/null)" == "$(printf '%s\n' "$@")" ]]
+}
+status=$(start_agent -)
+check "start-agent: the default lean arguments after --" started_with "$status" \
+    dev1 --kind claude --pane w4:p1 -- --strict-mcp-config --tools \
+    "Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion"
+status=$(start_agent '["--append-system-prompt", "be brief, then stop", "--tools", "Bash,Read"]')
+check "start-agent: a custom list, spaces and commas kept in one argument each" \
+    started_with "$status" \
+    dev1 --kind claude --pane w4:p1 -- --append-system-prompt "be brief, then stop" --tools Bash,Read
+status=$(start_agent '[]')
+check "start-agent: [] starts claude with its defaults (no --)" started_with "$status" \
+    dev1 --kind claude --pane w4:p1
+status=$(start_agent '["a\nb"]')
+check "start-agent: invalid settings exit 1 and start nothing" bash -c '[[ $1 == 1 && ! -e "$2" ]]' _ "$status" "$argv"
+out=$(cd "$sa_repo" && rm -f .claude/herdr-agent-pool.json && FAKE_START_RC=1 "$sa" dev1 w4:p1 2>&1); status=$?
+check "start-agent: herdr's exit code and agent_not_ready passed through" \
+    bash -c '[[ $1 == 1 && "$2" == *agent_not_ready* ]]' _ "$status" "$out"
+check "start-agent: usage (exit 2)" exits 2 "$sa" dev1
 
 # cleanup-worktree.sh: discard a merged branch's workspace, worktree and branches -----------------
 cw="$scripts/cleanup-worktree.sh"

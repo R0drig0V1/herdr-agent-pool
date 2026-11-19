@@ -89,7 +89,7 @@ There are two modes, chosen by the project's settings file:
 | Script | `resource-budget.py` | The machine's heavy and light slots, with a priority queue |
 | Script | `resource-board.sh` | The shared resource sheet: memory, sessions, slot holders, notes |
 | Script | `new-worktree.sh`, `cleanup-worktree.sh` | Create a development worktree; remove a merged one |
-| Script | `agents-in-repo.py`, `worktree-of.sh`, `claim-integrator.sh`, `union-rows.py`, `renumber.py`, `plan-tick.py` | Helpers: who runs where, name claims, index-table merges, numbering and plan ticks at merge |
+| Script | `agents-in-repo.py`, `worktree-of.sh`, `start-agent.sh`, `claim-integrator.sh`, `union-rows.py`, `renumber.py`, `plan-tick.py` | Helpers: who runs where, name claims, index-table merges, numbering and plan ticks at merge |
 
 Skills are instructions a Claude session follows; scripts are what makes the steps
 deterministic. A rule that matters is enforced by a script or a hook, and the skill explains
@@ -348,7 +348,7 @@ A project plugs into the plugin through files at fixed paths, and nothing else.
 | `scripts/worktree-setup.sh <base>` | no | prepares a fresh worktree (dependencies); runs in a light slot |
 | `scripts/verify-reset.sh` | no | resets verification state (databases, caches) after a failed or aborted merge |
 | `scripts/reverify-needed.sh <verified base> <new base> <PR head>` | no | changed paths on stdin; print `no-reverify` last and exit 0 to skip a re-verification; anything else verifies; read from the new base; 120 s limit |
-| `.claude/herdr-agent-pool.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, protected branches |
+| `.claude/herdr-agent-pool.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, `agent_args`, protected branches |
 | `.claude/prompts/integrator.md` | no | extra system prompt for pool integrators |
 
 The project's CI workflows are its own, and the plugin never edits them. How to keep them
