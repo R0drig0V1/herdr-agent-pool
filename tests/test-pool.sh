@@ -106,10 +106,11 @@ export PATH="$fake:$PATH" FAKE_AGENTS="$work/agents.json" FAKE_LOG="$work/herdr.
 export FAKE_SHELL_PID=$$
 export FAKE_GH="$work/gh"; mkdir -p "$FAKE_GH"; echo '[]' > "$FAKE_GH/list.json"
 agents() {  # agents <name|-> <pane> <status> <cwd> ...: write the fake `herdr agent list`
-    local json='[]'
+    local json='[]'   # a named agent's Claude Code session id is sess-<name>
     while [[ $# -ge 4 ]]; do
         json=$(jq -c --arg n "$1" --arg p "$2" --arg s "$3" --arg c "$4" \
-            '. + [{pane_id: $p, agent_status: $s, cwd: $c} + (if $n == "-" then {} else {name: $n} end)]' <<<"$json")
+            '. + [{pane_id: $p, agent_status: $s, cwd: $c}
+                  + (if $n == "-" then {} else {name: $n, agent_session: {kind: "id", value: ("sess-" + $n)}} end)]' <<<"$json")
         shift 4
     done
     jq -n --argjson a "$json" '{result: {agents: $a}, type: "agent_list"}' > "$FAKE_AGENTS"
@@ -187,7 +188,8 @@ for json in '{"integrators": {"min": 3, "max": 2}}' '{"integrators": {"max": 17}
             '{"integrators": {"reverify_exempt_paths": "docs/*"}}' '{"integrators": {"max_reverify": 0}}' \
             '{"integrators": {"nudge_after_minutes": -1}}' '{"numbered_files": {"adr": "docs/(a)(b)"}}' \
             '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}' \
-            '{"plan_ticks_in_merge": "no"}' '{"plan_ticks_in_merge": 0}'; do
+            '{"plan_ticks_in_merge": "no"}' '{"plan_ticks_in_merge": 0}' '{"integrator_compact_tokens": -1}' \
+            '{"integrator_compact_tokens": "120000"}' '{"integrator_compact_tokens": true}' '{"integrator_compact_tokens": 1.5}'; do
     printf '%s\n' "$json" > "$bad/.claude/herdr-agent-pool.json"
     "$pc" --root "$bad" >/dev/null 2>&1; status=$?
     check "project-config: rejects $json" [ "$status" == 1 ]
@@ -196,6 +198,10 @@ printf '%s\n' '{"integrators": {"locked_reverify_minutes": 0, "nudge_after_minut
 check "project-config: 0 turns the locked re-verify and the nudges off" \
     [ "$("$pc" --root "$bad" integrators.locked_reverify_minutes)$("$pc" --root "$bad" integrators.nudge_after_minutes)" == 00 ]
 check "project-config: plan ticks in the merge by default" [ "$("$pc" --root "$work/nowhere" plan_ticks_in_merge)" == true ]
+check "project-config: compacts the integrator above 120000 tokens by default" \
+    [ "$("$pc" --root "$work/nowhere" integrator_compact_tokens)" == 120000 ]
+printf '%s\n' '{"integrator_compact_tokens": 0}' > "$bad/.claude/herdr-agent-pool.json"
+check "project-config: integrator_compact_tokens 0 (off) is valid" [ "$("$pc" --root "$bad" integrator_compact_tokens)" == 0 ]
 # The template's coordinator.sh repeats the default name rule.
 mkdir -p "$work/names/Data Lab"; git init --quiet -b main "$work/names/Data Lab"
 mkdir -p "$work/names/Data Lab/scripts" && cp "$root/template/scripts/coordinator.sh" "$work/names/Data Lab/scripts/"
@@ -1256,6 +1262,18 @@ unset FAKE_PANES; echo '[]' > "$FAKE_GH/list.json"
 iw="$scripts/integrator-watch.sh"
 sst="$(git -C "$single" rev-parse --path-format=absolute --git-common-dir)/herdr-agent-pool"
 wpass() { (cd "$single" && env HERDR_ENV=1 HERDR_AGENT_POOL_CLEAN_GRACE=0 "$iw" once 2>&1); }
+# The integrator's Claude Code transcript (context-tokens.py): its cwd with every character
+# outside [A-Za-z0-9] as "-", under a private projects directory.
+export HERDR_AGENT_POOL_CLAUDE_PROJECTS="$work/claude-projects"
+itx="$HERDR_AGENT_POOL_CLAUDE_PROJECTS/${single//[^A-Za-z0-9]/-}/sess-integrator-single.jsonl"
+transcript() {  # transcript <context tokens>: the integrator's last turn sent that many tokens
+    mkdir -p "$(dirname "$itx")"
+    jq -nc '{type: "user", message: {role: "user", content: "x"}}' > "$itx"
+    jq -nc --argjson t "$1" '{type: "assistant", message: {model: "m", usage: {input_tokens: 2,
+        cache_creation_input_tokens: 1000, cache_read_input_tokens: ($t - 1002), output_tokens: 50}}}' >> "$itx"
+}
+transcript 30000
+compacts() { grep -c "^prompt integrator-single /compact Keep: every open PR" "$FAKE_LOG"; }
 prompts() { grep -c "^prompt integrator-single \[herdr message from the integrator watcher" "$FAKE_LOG"; }
 open_list() {  # open_list <N:head[:label]> ...: the fake open PRs
     local json='[]' n h l
@@ -1302,7 +1320,44 @@ check "watch: the lander's merge and bounce wake the integrator, in one message"
 out=$(wpass); out2=$(wpass)
 check "watch: lander news is told once (the bounced PR then waits like any other)" \
     bash -c '[[ "$1$2" != *"PR #53"* && "$1$2" != *"left the queue"* ]]' _ "$out" "$out2"
+open_list; wpass >/dev/null
+# Compaction: an idle integrator whose context is over integrator_compact_tokens (120000).
+check "context-tokens: the last turn's prompt (input + cache creation + cache read)" \
+    [ "$("$scripts/context-tokens.py" integrator-single)" == 30000 ]
+cp "$itx" "$work/itx.saved"
+jq -nc '{type: "system", subtype: "compact_boundary", compactMetadata: {preTokens: 30000, postTokens: 4000}}' >> "$itx"
+check "context-tokens: a compaction after the last turn counts its summary" \
+    [ "$("$scripts/context-tokens.py" integrator-single)" == 4000 ]
+mv "$work/itx.saved" "$itx"
+check "context-tokens: an agent without a session exits 2" exits 2 "$scripts/context-tokens.py" nobody
+: > "$FAKE_LOG"; out=$(wpass)
+check "watch: an idle integrator under the threshold is not compacted" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(compacts)"
+transcript 130000; agents integrator-single w1:p1 working "$single"; out=$(wpass)
+check "watch: a working integrator over the threshold is not compacted" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(compacts)"
+agents integrator-single w1:p1 blocked "$single"; out=$(wpass)
+check "watch: a blocked integrator is not compacted" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(compacts)"
+agents integrator-single w1:p1 idle "$single"; open_list 56:h56; out=$(wpass)
+check "watch: compacts the idle integrator over the threshold, once (COMPACT line)" \
+    bash -c '[[ "$1" == "COMPACT integrator-single 130000" && $2 == 1 ]]' _ "$out" "$(compacts)"
+out=$(wpass)
+check "watch: not twice in the same idle period (the news goes out instead)" \
+    bash -c '[[ "$1" == *"woke integrator-single: PR #56 waits"* && "$1" != *COMPACT* && $2 == 1 ]]' _ "$out" "$(compacts)"
 open_list
+agents integrator-single w1:p1 working "$single"; wpass >/dev/null
+agents integrator-single w1:p1 "done" "$single"; out=$(wpass)
+check "watch: not again within 10 minutes" bash -c '[[ -z "$1" && $2 == 1 ]]' _ "$out" "$(compacts)"
+agents integrator-single w1:p1 working "$single"; wpass >/dev/null
+agents integrator-single w1:p1 "done" "$single"; out=$(HERDR_AGENT_POOL_COMPACT_COOLDOWN=0 wpass)
+check "watch: a new idle period after the cooldown compacts again" \
+    bash -c '[[ "$1" == "COMPACT integrator-single 130000" && $2 == 2 ]]' _ "$out" "$(compacts)"
+agents integrator-single w1:p1 working "$single"; wpass >/dev/null; agents integrator-single w1:p1 idle "$single"
+echo '{"integrator_compact_tokens": 0}' > "$single/.claude/herdr-agent-pool.json"
+out=$(HERDR_AGENT_POOL_COMPACT_COOLDOWN=0 wpass); rm -f "$single/.claude/herdr-agent-pool.json"
+check "watch: integrator_compact_tokens 0 turns the compaction off" bash -c '[[ -z "$1" && $2 == 2 ]]' _ "$out" "$(compacts)"
+rm -f "$itx"; out=$(HERDR_AGENT_POOL_COMPACT_COOLDOWN=0 wpass); out2=$(HERDR_AGENT_POOL_COMPACT_COOLDOWN=0 wpass)
+check "watch: an unreadable transcript is said once, and nothing is prompted" \
+    bash -c '[[ "$1" == *"no compaction, cannot read integrator-single'"'"'s context"* && -z "$2" && $3 == 2 ]]' _ "$out" "$out2" "$(compacts)"
+transcript 30000
 # Cleanup: a ready worktree goes, a dirty one stays.
 for b in w-done w-dirty; do
     git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B "feat/$b" origin/main

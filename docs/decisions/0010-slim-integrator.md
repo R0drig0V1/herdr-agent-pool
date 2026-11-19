@@ -1,4 +1,4 @@
-# 0010. A slimmer single-mode integrator: plan ticks in the merge, a token-free watcher
+# 0010. A slimmer single-mode integrator: plan ticks in the merge, a token-free watcher, compaction
 
 - Status: accepted, to be measured
 - Date: 2026-11-19
@@ -33,6 +33,16 @@ Mechanical steps move from the integrator's turns into scripts, in single mode o
    the author first), and when the integrator is `idle` or `done` it sends one message with
    what changed: open PRs that wait for a verdict at a new head, and queued PRs that the
    lander merged or took out of the queue. Never while it works or is blocked, each item once.
+3. **Compaction by the watcher.** When the integrator is `idle` or `done` and its context is
+   above `integrator_compact_tokens` (default 120000; 0 turns it off), the watcher types one
+   `/compact <what to keep>` into it: the open PRs and their state (claimed, bounced, held,
+   waiting), the verdicts not yet sent, the plan progress and what the user asked; old tool
+   output goes. The context is the last assistant message's input plus cache tokens in its
+   Claude Code transcript (`context-tokens.py`: the session id and `cwd` from `herdr agent
+   list`, `~/.claude/projects/<cwd, each non-alphanumeric as ->/<session>.jsonl`). At
+   most once per idle period and once every 10 minutes, never while it works or is blocked,
+   and not at all when the transcript cannot be read (said once). A pass that compacts leaves
+   its news for the next pass, so the wake-up finds the smaller context.
 
 Pool mode is unchanged: the coordinator ticks from the merge reports and cleans up, and
 `integrator-pool.sh watch` nudges the members.
@@ -45,6 +55,10 @@ Pool mode is unchanged: the coordinator ticks from the merge reports and cleans 
   the merge lock, and a commit the check never saw.
 - **Let the lander or an Actions workflow tick and wake the integrator**: needs a GitHub-side
   event path into the local herdr server, which does not exist.
+- **Let Claude Code's auto-compaction do it**: it fires near the model's window, far above the
+  size where re-reading the context already dominates the integrator's cost.
+- **Restart the integrator with a fresh session**: drops the context completely, including what
+  the user asked and verdicts in flight, and needs a new kickoff; `/compact` keeps a summary.
 - **`/loop` the integrate skill** (the old fallback): it wakes the integrator on a timer
   whether or not anything changed, which costs a full turn (about 70,000 tokens) each time.
 
@@ -52,8 +66,12 @@ Pool mode is unchanged: the coordinator ticks from the merge reports and cleans 
 
 From docs/benchmark/README.md: the integrator took 106, 83, 139, 87, 103 and 87 turns in runs
 1 to 6; about 97% of all tokens are cache reads, about 70,000 per turn; run 3 lost 14 minutes
-and more to an integrator that nothing woke after lander merges. Not yet measured with this
-change: the next run of the benchmark with this configuration records it.
+and more to an integrator that nothing woke after lander merges. Run 7 (30 tasks, with the
+plan ticks and the watcher): the integrator's context grew from 46.6k tokens at its first turn
+to 301.6k at its last, and since every turn re-reads all of it, its 116 turns cost 20.4M
+cache-read tokens, a third of the run. Its real state lives in GitHub and files (PRs, labels,
+pool-state, the plan), not in the conversation, which is what makes compaction safe. Not yet
+measured: the compaction itself; the next run records it.
 
 ## Consequences
 
@@ -65,5 +83,12 @@ change: the next run of the benchmark with this configuration records it.
 - "Decided" for the watcher means a recorded bounce or hold of that head (both modes record
   them), a `queue` or `needs-human` label, or a merge; a verdict given only in a comment,
   without a recorded bounce, is not seen, so such a PR is news once per head.
+- A compaction can lose what only the conversation held: a decision the user gave in a
+  sentence, a review in progress, a verdict decided but not yet sent. It only happens while
+  the integrator is idle (no review in flight), the instructions name what to keep, and the
+  skill tells it to trust GitHub and the files over its memory afterwards.
+- Each compaction is one summarising turn over the whole context; it pays for itself when the
+  integrator then takes more than a few turns.
 - How to tell it still holds: integrator turns per merged PR and the idle gaps after merges,
-  against runs 5 and 6.
+  against runs 5 and 6; for the compaction, cache-read tokens per integrator turn and the
+  `COMPACT` lines, against run 7.

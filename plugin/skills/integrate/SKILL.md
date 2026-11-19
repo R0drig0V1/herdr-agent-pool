@@ -37,7 +37,9 @@ Write the values literally: shell variables do not survive from one command to t
   then `git switch <base> && git fetch origin --prune && git merge --ff-only origin/<base>`.
   Start the watcher once (Bash with `run_in_background`; a second start exits at once):
   `"${CLAUDE_PLUGIN_ROOT}/scripts/integrator-watch.sh"`. Token-free, it wakes you when idle
-  with news (a PR waits, the lander acted) and cleans up merged worktrees.
+  with news (a PR waits, the lander acted) and cleans up merged worktrees. When your context
+  is large it types `/compact` into you while idle: afterwards trust GitHub and the files
+  (`gh pr list`, `pool-state.py`, the plan) over your memory.
 - **Pool mode**: be in your verify worktree: `git rev-parse --show-toplevel` is
   `../<worktree_prefix>integrator-<n>` and `git symbolic-ref -q HEAD` prints nothing. Never
   `cd` into the main worktree.

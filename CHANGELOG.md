@@ -45,6 +45,13 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
     the integrator, only when it is idle or done, once per item, about open PRs that wait for
     a verdict and queued PRs the lander merged or took out of the queue. In a measured run
     the integrator sat idle 14 minutes after lander merges nothing told it about.
+  - The watcher also compacts the integrator: when it is idle or done and its context (read
+    from its Claude Code transcript by the new `context-tokens.py`) is above the new setting
+    `integrator_compact_tokens` (default 120000; 0 turns it off), it types one `/compact`
+    with what to keep (open PRs and their state, pending verdicts, the plan progress, what
+    the user asked), at most once per idle period and once every 10 minutes, never while it
+    works or is blocked. In a measured run (30 tasks) the integrator's context grew from 46.6k
+    to 301.6k tokens, and its 116 turns re-read 20.4M cache tokens, a third of the run.
   - The `pr` skill's body template lists each completed task by its id.
 - `install.sh` is now the whole per-repository setup, one command instead of three steps. It
   installs the plugin for the project with the `claude` CLI when it is not installed yet
