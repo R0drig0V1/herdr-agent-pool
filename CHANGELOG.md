@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format follows
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- The README is short: what the plugin does, the diagram, install, the skills, the core rules
+  and a documentation index. Every detail it held moved to the new `docs/reference.md`.
 - Fewer conflicts and interruptions, from a measured benchmark (docs/benchmark/):
   - the template's `.gitattributes` marks `CHANGELOG.md` and the docs indexes `merge=union`,
     so parallel PRs that append at the same spot no longer bounce (README, "Fewer conflicts");
