@@ -68,5 +68,5 @@ jobs:
           git config user.name "lander[bot]"
           git config user.email "lander[bot]@users.noreply.github.com"
           # The base's own copy: a queued PR cannot change the lander that judges it.
-          python3 .github/lander/land.py --base "$BASE" \
+          python3 .github/lander/land.py --base "$BASE" --approval review \
             --bot "$REVIEWER_BOT" ${EVENT_PR:+--pr "$EVENT_PR"}

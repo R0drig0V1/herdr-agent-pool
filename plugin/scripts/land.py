@@ -16,9 +16,13 @@ queue label, oldest first (by creation time, then number), and for each one:
      (the others wait in the queue);
    - CI on the head commit: every check finished and none failed (pending: the PR waits;
      failed: it leaves the queue);
-   - approval on the head commit: the latest review of each reviewer counts; any
-     `CHANGES_REQUESTED` blocks; an approval of an older commit does not count. A PR labelled
-     `risk:high` needs an approval from a person, not from one of the `--bot` logins.
+   - not from a fork (its code would run with the lander's rights);
+   - approval, by `--approval`. `label` (the default): the queue label is the approval,
+     because whoever added it reviewed the PR; it fits projects where every agent acts as
+     one GitHub account, which cannot approve its own PRs. `review`: an approving review of
+     the head commit is also needed, and a PR labelled `risk:high` needs one from a person,
+     not from one of the `--bot` logins (for reviewers with their own identity, e.g. a
+     GitHub App). In both modes a reviewer whose latest review requests changes blocks.
 2. Land: fetch the base and `refs/pull/<N>/head` (which must still be the head the gates
    saw), check out the base detached, `git merge --no-ff` the head, run the check command on
    that merge (default `scripts/check.sh`, the full check; it must leave tracked files
@@ -39,13 +43,17 @@ retrying that PR. A PR that fails a gate leaves the queue with a comment but no 
 Usage:
 
     land.py [--base BRANCH] [--remote NAME] [--check CMD] [--check-timeout MIN]
-            [--attempts N] [--max-rounds N] [--bot LOGIN]... [--dry-run]
+            [--attempts N] [--max-rounds N] [--approval label|review] [--bot LOGIN]...
+            [--pr N]... [--watch SECONDS] [--dry-run]
 
 `--base` defaults to the project's `base_branch` (project-config.py). `--pr N` also
 considers PR N even when GitHub's label search does not list it yet (the PR of the event that
 started the run; see `queued`). `--dry-run` reads
 GitHub and prints each decision without merging, commenting or labelling: shadow mode, to
-compare the lander with today's integrators before switching.
+compare the lander with today's integrators before switching. `--watch SECONDS` keeps
+running: it drains the queue, sleeps and drains again, until interrupted (the way to run the
+lander in a terminal, without GitHub Actions; a failed pass is reported and the next one
+still runs).
 
 Output: one line per pull request, `LAND #<N> <outcome> <detail>`, outcomes `merged`,
 `wait`, `unqueued`, `bounced`, `needs-human`, `retry-later`, `skip` (a `--pr` that is not
@@ -66,6 +74,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -104,6 +113,8 @@ class Settings:
     bots: set[str] = field(default_factory=set)
     dry_run: bool = False
     default_branch: str = ""
+    approval: str = "label"
+    watch: float = 0
     extra: list[int] = field(default_factory=list)
 
 
@@ -189,14 +200,16 @@ def ci_state(pr: dict[str, Any]) -> str:
     return state
 
 
-def approval(pr: dict[str, Any], bots: set[str]) -> tuple[bool, str]:
-    """Whether the head commit is approved as its risk requires, and why not."""
+def approval(pr: dict[str, Any], bots: set[str], mode: str) -> tuple[bool, str]:
+    """Whether the PR is approved as `mode` (and, in `review`, its risk) requires; why not."""
     latest: dict[str, dict[str, Any]] = {}
     for review in pr.get("reviews") or []:
         if review.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
             latest[(review.get("author") or {}).get("login", "")] = review
     if any(r["state"] == "CHANGES_REQUESTED" for r in latest.values()):
         return False, "changes are requested"
+    if mode == "label":
+        return True, ""
     head = pr["headRefOid"]
     approvers = [
         r for r in latest.values()
@@ -224,6 +237,8 @@ def gate(pr: dict[str, Any], s: Settings, red: bool) -> tuple[str, str]:
         return "unqueue", "the pull request is a draft"
     if pr.get("baseRefName") != s.base:
         return "unqueue", f"it targets {pr.get('baseRefName')}, not {s.base}"
+    if pr.get("isCrossRepository"):
+        return "unqueue", "it comes from a fork: land it by hand"
     if red and FIXES_BASE_RED not in labels(pr):
         return "wait", f"the base is red (an open {BASE_RED} issue); only {FIXES_BASE_RED} lands"
     ci = ci_state(pr)
@@ -231,7 +246,7 @@ def gate(pr: dict[str, Any], s: Settings, red: bool) -> tuple[str, str]:
         return "wait", "CI is still running on the head commit"
     if ci == "red":
         return "unqueue", "CI failed on the head commit"
-    approved, why = approval(pr, s.bots)
+    approved, why = approval(pr, s.bots, s.approval)
     if not approved:
         return "unqueue", why
     return "land", ""
@@ -429,13 +444,15 @@ def parse(argv: list[str]) -> Settings:
     p.add_argument("--bot", action="append", default=[], help="a reviewer login that is a bot")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--pr", type=int, action="append", default=[], help="also consider this PR")
+    p.add_argument("--approval", choices=("label", "review"), default="label")
+    p.add_argument("--watch", type=float, default=0, metavar="SECONDS", help="keep running")
     a = p.parse_args(argv)
     if a.attempts < 1 or a.max_rounds < 0 or a.check_timeout <= 0:
         p.error("--attempts must be >= 1, --max-rounds >= 0, --check-timeout > 0")
     return Settings(
         base=a.base or default_base(), remote=a.remote, check=shlex.split(a.check),
         check_timeout=a.check_timeout, attempts=a.attempts, max_rounds=a.max_rounds,
-        bots=set(a.bot), dry_run=a.dry_run, extra=a.pr,
+        bots=set(a.bot), dry_run=a.dry_run, extra=a.pr, approval=a.approval, watch=a.watch,
     )  # fmt: skip
 
 
@@ -448,16 +465,32 @@ def main(argv: list[str]) -> int:
     if not s.dry_run and git("status", "--porcelain", "--untracked-files=no", check=False):
         print("land.py: the working tree has uncommitted changes", file=sys.stderr)
         return 1
+    while True:
+        code = one_pass(s)
+        if not s.watch:
+            return code
+        try:
+            time.sleep(s.watch)
+        except KeyboardInterrupt:
+            return code
+
+
+def one_pass(s: Settings) -> int:
+    """Drain the queue once; 0, or 2 when git or gh failed (the tree is reset)."""
     try:
-        s.default_branch = run(
-            ["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]
-        ).strip()
+        s.default_branch = (
+            s.default_branch
+            or run(
+                ["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]
+            ).strip()
+        )
         count = drain(s)
     except Fatal as exc:
-        print(f"land.py: {exc}", file=sys.stderr)
+        print(f"land.py: {exc}", file=sys.stderr, flush=True)
         reset_tree()
         return 2
-    print(f"LANDER done: {count} queued pull request(s) processed", flush=True)
+    if count or not s.watch:  # a watch stays quiet while the queue is empty
+        print(f"LANDER done: {count} queued pull request(s) processed", flush=True)
     return 0
 
 

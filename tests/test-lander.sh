@@ -136,7 +136,7 @@ push_main() {  # push_main <file> <content>: someone else's commit lands on orig
 }
 lander() {  # lander [args...]: run land.py in the project; sets out, rc
     export CHECK_COUNT="$work/count"; : > "$CHECK_COUNT"
-    out=$(cd "$proj" && python3 "$land" --base main --bot reviewer-app "$@" 2>&1); rc=$?
+    out=$(cd "$proj" && python3 "$land" --base main --approval "${APPROVAL:-review}" --bot reviewer-app "$@" 2>&1); rc=$?
     unset CHECK_HOOK
 }
 runs() { wc -l < "$work/count" | tr -d ' '; }
@@ -290,6 +290,35 @@ lander --pr 18
 check "--pr: skips a PR that is not queued"         said "LAND #18 skip"
 check "--pr: nothing merged for it"                 not on_main eighteen.txt
 gh_set '.prs["17"].state = "MERGED" | .prs["18"].state = "CLOSED"'
+
+# --approval label (the default): the queue label is the approval; requested changes and forks
+# still block.
+make_pr 19 nineteen.txt nineteen
+gh_set '.prs["19"].reviews = []'
+APPROVAL=label lander
+check "label mode: lands without a review"          said "LAND #19 merged"
+make_pr 20 twenty.txt twenty risk:high
+gh_set '.prs["20"].reviews = [{author: {login: "owner"}, authorAssociation: "OWNER", state: "CHANGES_REQUESTED", commit: {oid: .prs["20"].headRefOid}}]'
+APPROVAL=label lander
+check "label mode: requested changes still block"   said "LAND #20 unqueued changes are requested"
+make_pr 21 twentyone.txt twentyone
+gh_set '.prs["21"].isCrossRepository = true'
+APPROVAL=label lander
+check "a PR from a fork leaves the queue"           said "LAND #21 unqueued it comes from a fork"
+gh_set '.prs["19"].state = "MERGED" | .prs["20"].state = "CLOSED" | .prs["21"].state = "CLOSED"'
+
+# --watch: keeps draining; a PR queued after the first pass lands in a later one.
+make_pr 22 twentytwo.txt twentytwo
+gh_set '.prs["22"].labels = []'
+(cd "$proj" && exec python3 "$land" --base main --watch 0.3 > "$work/watch.log" 2>&1) &
+watcher=$!
+sleep 1; gh_set '.prs["22"].labels = [{name: "queue"}]'
+for _ in $(seq 1 50); do on_main twentytwo.txt && break; sleep 0.2; done
+kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+check "--watch: lands a PR queued while it runs"    on_main twentytwo.txt
+check "--watch: quiet while the queue is empty"     bash -c "[[ \$(grep -c 'LANDER done' '$work/watch.log') -le 2 ]]"
+gh_set '.prs["22"].state = "MERGED"'
+git -C "$proj" checkout --quiet --detach 2>/dev/null; git -C "$proj" reset --quiet --hard
 
 echo dirty >> "$proj/README.md"
 lander

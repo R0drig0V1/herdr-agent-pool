@@ -20,7 +20,8 @@ workflows). During phase 1 the integrators keep reviewing and, instead of runnin
 - [What one run does](#what-one-run-does)
 - [Gates](#gates)
 - [Outcomes](#outcomes)
-- [Setting it up](#setting-it-up)
+- [Running it in a terminal](#running-it-in-a-terminal)
+- [Setting it up as a workflow](#setting-it-up-as-a-workflow)
 - [Shadow mode](#shadow-mode)
 - [Security](#security)
 - [Limitations](#limitations)
@@ -56,8 +57,15 @@ only one pending run and discards the others.
 | Base green | an open issue labelled `base-red`, and the PR is not labelled `fixes-base-red` | waits in the queue |
 | CI on the head commit | a check or status still running | waits in the queue |
 | | a check or status failed | leaves the queue, with a comment |
-| Approval of the head commit | someone's latest review requests changes, or no approval is of the head commit | leaves the queue, with a comment |
-| `risk:high` | no approval from a person (`OWNER`, `MEMBER` or `COLLABORATOR`, not a `--bot` login) | leaves the queue, with a comment |
+| Not from a fork | the head is in another repository (its code would run with the lander's rights) | leaves the queue, with a comment |
+| Approval | someone's latest review requests changes | leaves the queue, with a comment |
+| Approval, `--approval review` only | no approving review of the head commit; for `risk:high`, none from a person (`OWNER`, `MEMBER` or `COLLABORATOR`, not a `--bot` login) | leaves the queue, with a comment |
+
+**The queue label is the approval** by default (`--approval label`): whoever added it reviewed
+the PR. That fits a project where every agent acts as one GitHub account, because GitHub does
+not let an account approve its own pull requests. `--approval review` also asks for an
+approving review of the head commit; use it when reviewers have their own identity (a
+reviewer GitHub App, other people).
 
 Leaving the queue at a gate is not a bounce: it does not count toward the limit below.
 
@@ -78,7 +86,20 @@ Each PR prints one line, `LAND #<N> <outcome> <detail>`:
 Bounces are counted by a hidden marker in the lander's comments, so the count survives
 across runs and needs no state outside GitHub.
 
-## Setting it up
+## Running it in a terminal
+
+The lander needs only `git` and `gh`, so it runs without GitHub Actions. In a clean checkout
+of the repository (its own worktree, not one an agent works in):
+
+```bash
+python3 /path/to/herdr-agent-pool/plugin/scripts/land.py --watch 30
+```
+
+It drains the queue every 30 seconds until interrupted, and prints only when something was
+queued. One lander per base branch: two at once are safe (the push is never forced) but
+waste checks.
+
+## Setting it up as a workflow
 
 The lander needs the phase 0 pieces first:
 
@@ -98,7 +119,8 @@ The lander needs the phase 0 pieces first:
 
 Options of `land.py`: `--base` (default: the project's `base_branch`), `--remote` (`origin`),
 `--check` (`scripts/check.sh`), `--check-timeout` (60 minutes), `--attempts` (3),
-`--max-rounds` (2), `--bot LOGIN` (repeatable), `--pr N` (repeatable: also consider PR N,
+`--max-rounds` (2), `--approval label|review` (`label`), `--bot LOGIN` (repeatable),
+`--watch SECONDS` (keep running), `--pr N` (repeatable: also consider PR N,
 even before the label search lists it), `--dry-run`.
 
 ## Shadow mode

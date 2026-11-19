@@ -26,7 +26,10 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   on draft, CI of the head commit, approval of the head commit (a person's for `risk:high`)
   and an open `base-red` issue; merges `--no-ff`, runs the full check on the merge and
   pushes it unforced, merging again when the base moved. Conflicts and red checks bounce
-  with a counted comment, and the one over `--max-rounds` adds `needs-human`. `--dry-run` is
+  with a counted comment, and the one over `--max-rounds` adds `needs-human`. The queue label
+  is the approval by default (`--approval review` also asks for an approving review, and a
+  person's for `risk:high`); PRs from forks are not landed. `--watch SECONDS` keeps it
+  running in a terminal, without GitHub Actions. `--dry-run` is
   a shadow mode. Reference workflow in docs/workflows/land.yml; tests in
   tests/test-lander.sh, run by CI.
 - `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
