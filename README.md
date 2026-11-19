@@ -258,6 +258,18 @@ Moving a machine and a project over, with every session of the project stopped:
 
 `/herdr-agent-pool:setup` lists the old names a project still has.
 
+### Fewer conflicts
+
+Parallel branches bounce most often on files that every pull request appends to: a
+changelog, an index of decisions, a table of functions. The template's `.gitattributes` marks
+`CHANGELOG.md` and the docs indexes `merge=union`, so git keeps the lines both sides added
+instead of declaring a conflict, in the integrator's merge and in an author's rebase alike.
+Add the project's own append-only files there; never a file whose lines are edited, since a
+union merge never removes lines (the check still runs on every merge). A project installed
+before this keeps its files: copy `template/.gitattributes` by hand. Before a phase's first
+dispatch the dispatcher also runs `/herdr-agent-pool:improve-plan`, which chains the tasks
+that would create or rewrite the same module.
+
 ### The project's CI
 
 Many agents push far more often than a team, so the project's own workflows run far more

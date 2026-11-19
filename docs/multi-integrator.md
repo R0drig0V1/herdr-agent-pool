@@ -469,7 +469,8 @@ with one file per agent so nobody overwrites anybody.
   stops.
 - `show` prints:
   - memory, flagged **LOW** below `low_memory_gb`;
-  - the live herdr agents against the machine's `sessions_guideline`;
+  - the live herdr agents, and the working ones against the machine's `sessions_guideline`
+    (idle and done sessions do not count: the memory line shows what they hold);
   - who holds each heavy and light slot, and for how long, flagging a holder above a lowered
     limit; and the waiters, in turn order with their priority;
   - every note, flagged **overdue** or **(gone)**;

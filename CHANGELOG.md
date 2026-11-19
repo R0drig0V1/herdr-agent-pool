@@ -11,6 +11,16 @@ All notable changes to this project are documented here. The format follows
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- Fewer conflicts and interruptions, from a measured benchmark (docs/benchmark/):
+  - the template's `.gitattributes` marks `CHANGELOG.md` and the docs indexes `merge=union`,
+    so parallel PRs that append at the same spot no longer bounce (README, "Fewer conflicts");
+  - the dispatcher runs `/herdr-agent-pool:improve-plan` before a phase's first dispatch when
+    the phase has no review;
+  - the `sessions_guideline` counts working agents only: idle and done sessions (often of
+    other repositories) no longer block a dispatch or make the dispatcher ask the user, and
+    working agents over the guideline are reported, not a stop; only low memory stops it;
+  - the `pr` skill fetches with `--prune` before rebasing and after a rejected push of a new
+    branch, so a stale `origin/<branch>` is not mistaken for someone else's branch.
 - `install.sh` is now the whole per-repository setup, one command instead of three steps. It
   installs the plugin for the project with the `claude` CLI when it is not installed yet
   (`--no-plugin` skips it), checks `jq`, `python3`, `gh`, herdr and herdr's Claude

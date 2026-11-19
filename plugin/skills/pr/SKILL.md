@@ -23,7 +23,9 @@ from one command to the next). `mode` is `single` or `pool`.
   (`gh pr view --json author -q .author.login` differs from `gh api user -q .login`), ask the
   user before you push, edit or comment. Ask every time.
 - Commit everything intended (use the `commit` skill).
-- Rebase so the integrator merges what you tested: `git fetch origin && git rebase origin/<base>`.
+- Rebase so the integrator merges what you tested:
+  `git fetch --prune origin && git rebase origin/<base>` (`--prune` drops remote branches that
+  no longer exist, so an old `origin/<branch>` is not mistaken for someone else's).
   A new migration of yours that no longer chains onto `<base>`'s latest: renumber and re-chain.
 
 ## 2. Check
@@ -43,6 +45,10 @@ git diff --stat origin/<base>...HEAD
 ## 3. Push and create
 
 The body follows `references/body.md` (read it once per session).
+
+A rejected push of a new branch: run `git fetch --prune origin` and push again. Never force a
+push you have not announced yet; if the branch really exists on origin with other commits,
+ask the user.
 
 ```bash
 git push -u origin HEAD
