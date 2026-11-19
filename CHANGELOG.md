@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format follows
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- The integrator no longer tells the other agents that the base moved after a merge, and an
+  author no longer rebases or force-pushes a branch it has announced unless it bounced. Every
+  PR is already verified merged onto the current base. In a measured run (1 integrator, 3
+  agents, 6 tasks) those messages were a third of all messages, some reached agents that had
+  finished, and one made an author rewrite a branch under verification, which left its PR
+  closed instead of merged.
 - **Renamed to `herdr-agent-pool`**, so it no longer shares its names with the separate
   two-level plugin in claude-code-herdr: marketplace `herdr-agent-pool`, plugin id
   `herdr-agent-pool@herdr-agent-pool`, skills `/herdr-agent-pool:<skill>`, settings
