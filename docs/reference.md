@@ -87,12 +87,22 @@ per-repository default applies):
 | `verify` | every field empty | merge verifications: `check_env` (variables for `scripts/check.sh`, e.g. a fast lane), `docs_only_paths` and `docs_only_env` (added when every changed path matches) |
 | `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`), `locked_reverify_minutes` (60; 0 off), `nudge_after_minutes` (5; 0 off); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](multi-integrator.md)) |
 | `numbered_files` | `{}` | numbered files such as migrations and ADRs, `{kind: regex}` with one group for the number (e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md"}`); authors take the next free number on their base, and `integrate-pr.sh` renumbers a PR's new files at merge when another branch took that number (file, index row, links; a `RENUMBERED` line each), before the verification |
+| `agent_args` | `["--strict-mcp-config", "--tools", "Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion"]` | the arguments `dispatch` passes to `claude` for each development agent (`start-agent.sh`), one argument per item (non-empty, one line); `[]` gives Claude Code's defaults |
 
 `plugin/scripts/project-config.py` is the only reader: it prints one key
 (`project-config.py base_branch`, `project-config.py integrators.max`) or all of them as JSON
 (with the derived `mode` and `integrator_pool`), and rejects unknown keys and invalid
 values (keys starting with `$`, such as `$comment`, are ignored). Scripts and skills stop on an
 invalid file; the Bash guard falls back to the defaults, so `main` stays protected.
+
+`agent_args` keeps development agents lean: every turn re-reads the start-up context, and
+most of it is tool definitions and MCP servers the development workflow never uses. The
+default (no MCP servers, nine tools) cut one turn's start-up context from about 26,000-29,000
+tokens to about 16,000 ([decision 0011](decisions/0011-lean-agent-start.md)). A development
+agent therefore has no subagents (`Agent`), web tools, `TodoWrite` or `Monitor`; add one to
+the list when a project needs it, and measure it first (`TodoWrite` alone doubled the
+context). Unknown tool names are ignored silently. The integrator and the coordinator are
+not affected.
 
 With a `base_branch` other than `main`, the plugin never moves `main`: `integrate` follows
 the promotion procedure the project documents in `CLAUDE.md` or
@@ -240,7 +250,7 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 
 | Component | Name | What it does |
 |-----------|------|--------------|
-| Skill | `dispatch` | Integrator only: `new-worktree.sh`, then `herdr worktree open` (fallback `workspace create`) as its own workspace, `herdr agent start <name> --kind claude`, and the brief |
+| Skill | `dispatch` | Integrator only: `new-worktree.sh`, then `herdr worktree open` (fallback `workspace create`) as its own workspace, `start-agent.sh` (`herdr agent start <name> --kind claude` with `agent_args`), and the brief |
 | Skill | `commit` | Conventional Commits in English, runs `scripts/check.sh` first, never stages secrets |
 | Skill | `pr` | Rebases, checks, opens the PR with a structured body, announces it to the project's integrator herdr agent (`integrator_name`) |
 | Skill | `integrate` | Integrator loop (both modes): queue (`pool-state.py queue`) -> claim (pool) -> review -> `integrate-pr.sh` -> plan (single) or merge report to the coordinator (pool) -> verdict to the author's herdr agent |
@@ -255,6 +265,7 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Hook | `session-start-integrator.sh` | Gives the integrator (pool mode: the coordinator, and each pool member in its verify worktree) its herdr name (`claim-integrator.sh`) as it starts, relaunches and resumes included |
 | Hook | `notify.sh` | Sound and terminal bell on Stop / Notification |
 | Script | `new-worktree.sh`, `verify-merge.sh` | Worktree creation; verification gate whose exit code is the verdict |
+| Script | `start-agent.sh` | Starts a development agent in its pane with the project's `agent_args` passed to `claude` |
 | Script | `agents-in-repo.py` | Read-only: live herdr agents whose pane cwd is in a worktree of this repository (`--branch`, `--name`, `--main-worktree`) |
 | Script | `claim-integrator.sh` | Gives the integrator session its herdr name (`integrator_name`), or refuses when another agent holds it; run by the SessionStart hook, and by `dispatch` and `integrate` as a fallback |
 | Script | `project-config.py` | Reads and validates `.claude/herdr-agent-pool.json` (see Configuration) |

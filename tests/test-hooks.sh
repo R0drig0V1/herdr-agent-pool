@@ -159,10 +159,14 @@ check_pc "default protected_branches"   "$on"  protected_branches ""
 check_pc "configured base_branch"       "$z"   base_branch dev
 check_pc "configured integrator_name"   "$z"   integrator_name integrador
 check_pc "configured protected_branches" "$z"  protected_branches "promote/*"
+check_pc "default agent_args, one per line" "$on" agent_args \
+    "$(printf '%s\n' --strict-mcp-config --tools Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion)"
 bad_cfg="$work/bad-cfg"
 new_repo "$bad_cfg" yes
 for json in '{"base_brnch": "dev"}' '{"integrator_name": "Integrador"}' '{"base_branch": "a..b"}' \
-            '{"protected_branches": "main"}' '[]' '{"base_branch": '; do
+            '{"protected_branches": "main"}' '[]' '{"base_branch": ' \
+            '{"agent_args": "--strict-mcp-config"}' '{"agent_args": [1]}' '{"agent_args": ["a\nb"]}' \
+            '{"agent_args": [""]}' '{"agent_args": null}'; do
     printf '%s\n' "$json" > "$bad_cfg/.claude/herdr-agent-pool.json"
     (cd "$bad_cfg" && "$pc" >/dev/null 2>&1); status=$?
     if [[ $status == 1 ]]; then echo "ok    project-config: rejects $json"

@@ -54,6 +54,12 @@ Keys (all optional; a missing file means every default):
   top of `check_env` (a docs-only fast lane; off while `docs_only_paths` is empty). Names
   must look like `[A-Za-z_][A-Za-z0-9_]*` and may not start with `CLAUDE_`, `HERDR_` or
   `HERDR_AGENT_POOL_` (identity variables); values are strings without newlines.
+* `agent_args` (default `DEFAULT_AGENT_ARGS`: `--strict-mcp-config` and a `--tools` list):
+  the arguments `start-agent.sh` passes to `claude` for each development agent the dispatcher
+  starts, one argument per item (non-empty one-line strings; `[]` gives Claude Code's
+  defaults). Every turn re-reads the start-up context, so tools and MCP servers an agent
+  never uses are paid for on every turn (docs/decisions/0011-lean-agent-start.md). The
+  integrator and coordinator sessions do not use it.
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -109,6 +115,13 @@ VERIFY_DEFAULTS: dict[str, Any] = {"check_env": {}, "docs_only_paths": [], "docs
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RESERVED_ENV = ("CLAUDE_", "HERDR_", "HERDR_AGENT_POOL_")
 DERIVED = ("mode", "integrator_pool")
+# No MCP servers and only the tools the development workflow uses (commit, pr, the brief).
+# Measured, not guessed: see docs/decisions/0011-lean-agent-start.md before adding a tool.
+DEFAULT_AGENT_ARGS = (
+    "--strict-mcp-config",
+    "--tools",
+    "Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion",
+)
 
 
 class ConfigError(ValueError):
@@ -173,6 +186,7 @@ def defaults(root: str) -> dict[str, Any]:
         "integrators": None,
         "verify": {k: type(v)() for k, v in VERIFY_DEFAULTS.items()},
         "numbered_files": {},
+        "agent_args": list(DEFAULT_AGENT_ARGS),
         "mode": "single",
         "integrator_pool": [],
     }
@@ -258,6 +272,20 @@ def _numbered_files(path: str, value: Any) -> dict[str, str]:
     return result
 
 
+def _agent_args(path: str, value: Any) -> list[str]:
+    """Validated `agent_args`: a list of non-empty one-line strings (raises ConfigError).
+
+    One line each because `project-config.py agent_args` prints one item per line and
+    start-agent.sh reads them back one argument per line; empty items are refused so that no
+    output means `[]`.
+    """
+    if not isinstance(value, list) or not all(
+        isinstance(v, str) and v and not set(v) & {"\n", "\r", "\0"} for v in value
+    ):
+        raise ConfigError(f"{path}: agent_args must be a list of non-empty one-line strings")
+    return list(value)
+
+
 def valid_branch(name: str) -> bool:
     """Whether `name` is a usable branch name (`git check-ref-format --branch` rules, offline)."""
     return bool(
@@ -288,6 +316,8 @@ def _checked(path: str, key: str, value: Any) -> Any:
     elif key == "protected_branches":
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
             raise ConfigError(f"{path}: protected_branches must be a list of patterns")
+    elif key == "agent_args":
+        return _agent_args(path, value)
     elif key == "worktree_prefix":
         if not isinstance(value, str) or not PREFIX.fullmatch(value):
             raise ConfigError(
