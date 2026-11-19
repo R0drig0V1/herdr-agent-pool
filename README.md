@@ -433,6 +433,10 @@ or attaches the TUI.
 
 ## Development
 
+Design decisions are recorded in [docs/decisions/](docs/decisions/README.md), and workflow
+changes are measured with the benchmark in [docs/benchmark/](docs/benchmark/README.md) (scripts
+in `benchmark/`): record each new decision and each run there.
+
 ```bash
 tests/test-hooks.sh                 # hook, installer and agents-in-repo.py smoke tests
 tests/test-pool.sh                  # pool mode: config, guards, claims, lock, integrate-pr.sh, pool, resource budget

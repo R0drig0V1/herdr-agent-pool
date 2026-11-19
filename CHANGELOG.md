@@ -44,6 +44,11 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   checks the message header in `references/*.md`.
 
 ### Added
+- `docs/decisions/`: the plugin's own design decisions (0001-0008), each with its context,
+  alternatives and evidence; `docs/benchmark/`: the method and the four first runs of the
+  benchmark (five agents, an 18-task backlog in the public `textkit-sandbox`), with
+  `benchmark/measure.py` (turns, messages, tokens from session transcripts) and
+  `benchmark/pr-stats.py` (PR timings, bounces, force pushes from GitHub).
 - `install.sh` detects a machine that knows this GitHub repository as a marketplace with
   another name (set up before the rename, or declared so in the user's settings). There,
   `claude plugin marketplace add` answers "already on disk", adds nothing, and the plugin is
