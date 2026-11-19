@@ -110,9 +110,10 @@ running command (ask the user).
 ## 4. Start the agent
 
 ```bash
-herdr agent start "$NAME" --kind claude --pane "$PANE"; echo "exit=$?"
+"${CLAUDE_PLUGIN_ROOT}/scripts/start-agent.sh" "$NAME" "$PANE"; echo "exit=$?"
 ```
 
+It runs `herdr agent start` with the project's `agent_args` (a lean tool set by default).
 `agent_not_ready`: the agent is stuck at a startup dialog (folder trust, a permission). **Do
 not answer it with `agent send-keys`**: tell the user which workspace (`$NAME`) needs them,
 wait with `herdr agent wait "$NAME" --until idle --timeout 600000`, then continue.

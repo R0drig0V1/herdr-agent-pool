@@ -6,8 +6,9 @@ does and what each non-zero exit code means. Read when a cleanup does not exit 0
 
 # cleanup-worktree.sh
 
-Whoever dispatched an agent cleans up after its branch merged: the integrator in single mode,
-the coordinator in pool mode. The merged verdict tells the author to wrap up and stop.
+Whoever dispatched an agent cleans up after its branch merged: in single mode the integrator's
+watcher (`integrator-watch.sh` runs it for every `ready` branch), in pool mode the coordinator.
+The merged verdict tells the author to wrap up and stop.
 
 `--list` prints every development worktree with its state; `ready` means merged, clean and its
 agent idle. `cleanup-worktree.sh <branch>` closes the agent's workspace, removes the worktree

@@ -34,6 +34,6 @@ and the next dispatches waited.
 
 - The lander is reliable, but it is not yet an efficiency gain. Before it replaces the local
   merge, the integrator needs a wake-up on lander outcomes: a token-free watcher that prompts
-  it when a queued PR merges or leaves the queue (planned with the integrator's slimming).
+  it when a queued PR merges or leaves the queue (`integrator-watch.sh`, decision 0010).
 - Each PR also pays the CI run in Actions plus the lander run (about a minute) where the
   local merge pays nothing extra.

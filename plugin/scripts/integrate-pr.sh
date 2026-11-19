@@ -32,7 +32,10 @@
 #     `numbered_files` set, renumber.py moves the numbered files the PR adds to the next free
 #     numbers on this base and rewrites their names in the PR's files (one
 #     `RENUMBERED <kind> <old> -> <new>` line each, also in the merge commit message); a
-#     re-merge onto a moved base renumbers again.
+#     re-merge onto a moved base renumbers again. Single mode (unless the setting
+#     `plan_ticks_in_merge` is false): plan-tick.py ticks the tasks of the PR body's "Plan
+#     tasks completed" section in docs/phases/*.md, in the same merge (`PLAN-TICKED <id>` /
+#     `PLAN-UNTICKED <id>` lines, also in the merge commit message); a re-merge ticks again.
 #  3. verify-merge.sh (--here in pool mode), output in a log file; the exit code is the
 #     verdict. A failure aborts the merge and resets the verification state (exit 4). check.sh
 #     must not change tracked files (that is a failure too).
@@ -93,12 +96,19 @@ resolve_rows() {
     done < <(git diff --name-only --diff-filter=U)
     [[ -z "$(git diff --name-only --diff-filter=U)" ]]
 }
-# renumber_merge <message file>: renumber the PR's numbered files (renumber.py apply), print
-# its RENUMBERED lines and write the message: <message file>.head plus those lines.
+# renumber_merge <message file>: renumber the PR's numbered files (renumber.py apply), tick
+# its plan tasks (plan-tick.py, single mode: $IPR_BODY holds the PR body), print their lines
+# and write the message: <message file>.head plus those lines. Only renumber.py fails it: a
+# failed plan-tick.py leaves the ticks to the integrator.
 renumber_merge() {
-    local out=""
+    local out="" ticks=""
     if [[ -n "${IPR_NUMBERED:-}" && "$IPR_NUMBERED" != "{}" ]]; then
         out=$("$here_dir/renumber.py" apply --kinds "$IPR_NUMBERED") || return 1
+    fi
+    if [[ -n "${IPR_BODY:-}" ]]; then
+        ticks=$("$here_dir/plan-tick.py" --stage < "$IPR_BODY") \
+            || { ticks=""; echo "warning: plan-tick.py failed: tick the plan by hand" >&2; }
+        out=$(printf '%s\n%s' "$out" "$ticks" | sed '/^$/d')
     fi
     { cat "$1.head"; [[ -z "$out" ]] || printf '\n%s\n' "$out"; } > "$1"
     [[ -z "$out" ]] || printf '%s\n' "$out"
@@ -228,6 +238,7 @@ max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
 exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
 locked_minutes=$(jq -r '.integrators.locked_reverify_minutes // 60' <<<"$config")
 export IPR_NUMBERED; IPR_NUMBERED=$(jq -c '.numbered_files // {}' <<<"$config")
+ticks_on=$(jq -r 'if .mode == "single" and .plan_ticks_in_merge != false then 1 else 0 end' <<<"$config")
 if [[ "$mode" == pool ]]; then me="${HERDR_AGENT_POOL_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
 [[ -n "$me" ]] || { echo "pool mode: HERDR_AGENT_POOL_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
@@ -339,6 +350,8 @@ fi
 # Number at merge: the PR's numbered files take the next free numbers on this base.
 msg="$git_dir/herdr-agent-pool-merge-msg-$N"
 printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg.head"
+export IPR_BODY=""   # single mode: the plan ticks in the merge read the PR body from here
+if [[ $ticks_on == 1 ]]; then IPR_BODY="$msg.body"; jq -r '.body // ""' <<<"$pr" > "$IPR_BODY"; fi
 renumber_merge "$msg" || finish_bounce conflict 3 "the PR's numbered files could not be renumbered (renumber.py failed)"
 
 # 3. Verify, heartbeating the claim meanwhile (a verification can take longer than a TTL).
@@ -466,6 +479,6 @@ if [[ "$mode" == pool ]]; then
     "$ps" report add "$N" --sha "$merged" --owner "$me" --tasks "$tasks" >/dev/null
     "$ps" release "$N" --owner "$me" >/dev/null
 fi
-rm -f "$msg" "$msg.head" "$IPR_STATE"
+rm -f "$msg" "$msg.head" "$msg.body" "$IPR_STATE"
 result merged "PR #$N as $merged onto origin/$base; branch $B $branch"
 exit 0
