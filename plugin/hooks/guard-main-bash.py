@@ -295,7 +295,7 @@ def tool_need(prog: str, args: list[str]) -> str | None:
         return "manage"
     if prog == "cleanup-worktree.sh" and sub and sub != ["--list"]:
         return "manage"
-    return "manage" if prog == "integrator-watch.sh" else None
+    return "manage" if prog in ("integrator-watch.sh", "retry-stalled.py") else None
 
 
 def check_tools(prog: str, args: list[str], cwd: str, session: str) -> str | None:

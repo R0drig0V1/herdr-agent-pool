@@ -35,9 +35,9 @@ Write the values literally: shell variables do not survive from one command to t
 - **Single mode**: be in the main worktree
   (`[[ "$(git rev-parse --absolute-git-dir)" == "$(git rev-parse --path-format=absolute --git-common-dir)" ]]`),
   then `git switch <base> && git fetch origin --prune && git merge --ff-only origin/<base>`.
-  Start the watcher once (Bash with `run_in_background`; a second start exits at once):
-  `"${CLAUDE_PLUGIN_ROOT}/scripts/integrator-watch.sh"`. Token-free, it wakes you when idle
-  with news (a PR waits, the lander acted) and cleans up merged worktrees. When your context
+  A token-free watcher (`integrator-watch.sh`) started with your session: it wakes you when
+  idle with news (a PR waits, the lander acted), cleans up merged worktrees and asks an
+  agent stopped by an API error to continue. When your context
   is large it types `/compact` into you while idle: afterwards trust GitHub and the files
   (`gh pr list`, `pool-state.py`, the plan) over your memory.
 - **Pool mode**: be in your verify worktree: `git rev-parse --show-toplevel` is

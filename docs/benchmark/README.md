@@ -92,6 +92,7 @@ All on 2026-11-19, the same seed, Opus 5.5 with effort high, at most 5 developme
 | 7 | as run 6, 30 tasks (phase 3: 12 independent tasks), up to 10 agents, single mode; phase 3 reviewed by the integrator during the run | 31.7 (phase 3 waited about 18 min for its review) | 13.8 (10 agents) | 2.3 / 5.1 | 10 | 10 | 54 | 116 | 2.24 M | 65.2 M |
 | 8 | as run 7, pool mode: a coordinator and 3 integrators; phase 3 already reviewed | 25.5 | 19.4 (10 agents) | 2.1 / 6.6 | 14 | 13 | 124 | 73 + 124 + 112 + 75 | 2.55 M | 93.2 M |
 | 9 | as run 6, plus the watcher and compaction of the integrator (decision 0010) and the lean start of development agents (decision 0011) | 20.3 | 16.9 | 1.6 / 5.8 | 8 | 8 | 32 | 101 | 1.24 M | **27.3 M** |
+| 10 | as run 9, plus mentions rewritten at a renumber (decision 0009's amendment) | 26.7 | 27.5 | 2.6 / 5.9 | 9 | 9 | 56 | 103 | 1.33 M | 29.8 M |
 
 Notes per run:
 
@@ -147,6 +148,16 @@ and 4.
   0009's amendment). The last task, the usage guide, depends on all others and ran alone
   for the last 4 minutes. An idle agent's automatic recap kept it marked as working, so
   its worktree was not cleaned up and its agent-minutes ran on.
+- **Run 10.** The first attempt never started: the integrator's first turn ended with "Can't
+  reach the API server" and it stood still for two and a half hours until the user asked
+  (decision 0012); the numbers are the second attempt's. The renumbered ADR's mentions were
+  rewritten in the merge and no follow-up PR was needed. Slower than run 9 (26.7 against
+  20.3 minutes) on the same plugin: the integrator was never idle between minutes 3 and 18,
+  so the watcher compacted it only at 196,000 tokens (the threshold is 120,000), PRs waited
+  2.6 minutes on average against 1.6, and the integrator pushed a commit of its own that
+  re-sorted the README and CHANGELOG rows, which bounced two open PRs. Of the 9 bounces, 6
+  were code appended to one module, 2 came from that commit and 1 was a review finding (an
+  ADR and its code disagreed). A development agent's turn read 42,200 tokens, as in run 9.
 
 ## What the runs show
 
@@ -178,15 +189,25 @@ and 4.
    whose check takes seconds, one integrator merged as fast as three; the pool cost 43% more
    cache reads and twice the messages. It should pay off when a merge's verification is slow
    (a long test suite), which this benchmark does not have yet.
-8. **Reviewing a phase's plan blocks it** (run 7): review the next phase while the current one
+8. **A development agent spends more turns on the ceremony than on the task** (run 9, 18
+   tasks, 402 turns): 26% of the turns read the task and write the code; the `commit` skill
+   takes 14%, the `pr` skill 31% (rebase, a second run of the checks, push, the PR, its own
+   name, the announcement, a summary) and what follows the announcement 29% (the verdict, a
+   bounce, the final report). A task merged at the first try takes about 17 turns, 11 of them
+   after the code is written.
+9. **Compaction that waits for an idle integrator comes late when it is never idle** (run 10:
+   196,000 tokens against a threshold of 120,000).
+10. **Reviewing a phase's plan blocks it** (run 7): review the next phase while the current one
    runs, or let the phase's tasks that depend on nothing start during the review.
-9. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
+11. **A mechanical merger needs a wake-up.** The lander is reliable, but without an event that
    tells the integrator what happened, the run waits (decision 0005).
 
 ## Caveats
 
 - One run per configuration: differences of a few minutes are noise; the large ones (plan,
-  lander wake-up, append conflicts) are not.
+  lander wake-up, append conflicts) are not. Runs 9 and 10 ran almost the same plugin and
+  differ by 6 minutes of wall time (30%) and 9% of cache reads: the tokens per turn repeat
+  well, the wall time does not.
 - Run 2 changed the plugin and the plan at once; runs 3 and 4 reuse its plan, so 2 against 4
   compares the plugins and 2 against 3 isolates the lander.
 - Agent-minutes count a session from its first to its last activity, including waits for a

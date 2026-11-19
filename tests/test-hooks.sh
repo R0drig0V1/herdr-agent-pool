@@ -17,6 +17,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 hooks="$root/plugin/hooks"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
+export HERDR_AGENT_POOL_NO_WATCH=1   # the SessionStart hook starts no watcher, but in its own test
 unset CLAUDE_ROLE HERDR_ENV HERDR_AGENT_POOL_NAME
 
 # Not under a temporary directory: the Bash guard deliberately allows writes there, so the
@@ -586,6 +587,10 @@ echo "$FAKE_CLAIM_MSG" >&2
 exit "$code"
 FAKE
 chmod +x "$fake_root/scripts/claim-integrator.sh"
+# A fake watcher: one line (its cwd) per start in $FAKE_WATCH_LOG.
+printf '#!/bin/sh\npwd >> "$FAKE_WATCH_LOG"\n' > "$fake_root/scripts/integrator-watch.sh"
+chmod +x "$fake_root/scripts/integrator-watch.sh"
+export FAKE_WATCH_LOG="$work/watch.log"; : > "$FAKE_WATCH_LOG"
 ssi="$hooks/session-start-integrator.sh"
 now() { python3 -c 'import time; print(time.time())'; }
 ss_out=""; ss_calls=0
@@ -647,6 +652,14 @@ sleep 2.5
 calls=$(wc -l < "$work/claim-retry.log" | tr -d ' ')
 [[ "$calls" == 2 ]] && echo "ok    session-start-integrator: the background retry claims the name (2 calls)" \
     || { echo "FAIL  session-start-integrator: background retry made $calls call(s), want 2"; fails=$((fails + 1)); }
+
+check_ssi "no watcher with HERDR_AGENT_POOL_NO_WATCH=1" [ ! -s "$FAKE_WATCH_LOG" ]
+run_ssi watch "$on" HERDR_AGENT_POOL_NO_WATCH=; sleep 0.3
+check_ssi "starts single mode's watcher from the main worktree, logging to the git dir" \
+    bash -c '[[ $(wc -l < "$1") == *1 && "$(cat "$1")" -ef "$2" && -f "$2/.git/herdr-agent-pool/integrator-watch.log" ]]' _ "$FAKE_WATCH_LOG" "$on"
+: > "$FAKE_WATCH_LOG"
+run_ssi watch-coordinator "$on" HERDR_AGENT_POOL_NO_WATCH= CLAUDE_ROLE=coordinator; sleep 0.3
+check_ssi "no watcher for a coordinator" [ ! -s "$FAKE_WATCH_LOG" ]
 
 # End to end with the real claim-integrator.sh and the fake herdr: an unnamed agent in the
 # integrator's pane is renamed at session start.

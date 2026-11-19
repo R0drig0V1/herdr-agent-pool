@@ -139,7 +139,11 @@ things for it:
   `~/.config/herdr-agent-pool/resources.json` makes them fail.
 - `integrate` merges with `integrate-pr.sh`, which also ticks the PR's plan tasks in the merge
   commit (`plan_ticks_in_merge`).
-- `integrate` starts `integrator-watch.sh` in the background: without tokens, every minute it
+- The plugin's SessionStart hook starts `integrator-watch.sh` with the integrator's session
+  (`HERDR_AGENT_POOL_NO_WATCH=1` turns that off; its log is
+  `.git/herdr-agent-pool/integrator-watch.log`; it ends when the integrator is gone from
+  herdr). Without tokens, every minute it asks every agent of the repository whose last turn
+  stopped on an API error to continue (`retry-stalled.py`, decision 0012),
   cleans up the merged worktrees whose author is idle (`cleanup-worktree.sh`) and wakes the
   idle integrator, once per item, about PRs that wait for a verdict and PRs the lander merged
   or took out of the queue. When the idle integrator's context is above
@@ -287,7 +291,8 @@ their settings and keep it; `/herdr-agent-pool:setup` offers to remove the key.
 | Script | `union-rows.py` | The one conflict integrators resolve: rows added to the same index table (refuses duplicate keys, except numbers being renumbered) |
 | Script | `renumber.py` | Run by `integrate-pr.sh` on each merge: moves the PR's new numbered files (`numbered_files`) to the next free numbers on the base and rewrites their names, links and kind mentions (`ADR 0001`) in the PR's files |
 | Script | `plan-tick.py` | Run by `integrate-pr.sh` on each merge in single mode: ticks the task ids the PR body lists under "Plan tasks completed" in `docs/phases/*.md` (a whole-token id that starts one open task line, or the only open line mentioning it); reports ids it cannot tick |
-| Script | `integrator-watch.sh` | Single mode's watcher, token-free (`integrate` starts it): every minute cleans up the `ready` worktrees and wakes the integrator, only when idle or done, with what changed (PRs waiting for a verdict, the lander's merges and unqueues), each item once; sends the idle integrator one `/compact` when its context is above `integrator_compact_tokens` (a `COMPACT <name> <tokens>` line); `once` runs one pass |
+| Script | `integrator-watch.sh` | Single mode's watcher, token-free (the SessionStart hook starts it with the integrator's session): every minute cleans up the `ready` worktrees and wakes the integrator, only when idle or done, with what changed (PRs waiting for a verdict, the lander's merges and unqueues), each item once; sends the idle integrator one `/compact` when its context is above `integrator_compact_tokens` (a `COMPACT <name> <tokens>` line); runs `retry-stalled.py` first; ends when the integrator is gone from herdr; `once` runs one pass |
+| Script | `retry-stalled.py` | One pass, run by both watchers every minute: asks every idle agent of the repository whose Claude Code transcript ends with an API error (a network cut, a machine that slept) to continue where it left off; backoff from 1 to 15 minutes, 20 retries, never for an error a retry cannot fix (authentication, billing, an invalid request) |
 | Script | `context-tokens.py` | Prints a herdr agent's current context in tokens, from its Claude Code transcript (`~/.claude/projects/<cwd, non-alphanumerics as ->/<session id>.jsonl`; the last assistant message's input + cache tokens); `integrator-watch.sh` uses it |
 
 Each skill's `SKILL.md` holds the normal path only: preconditions, the steps with their

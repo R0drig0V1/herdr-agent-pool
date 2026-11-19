@@ -8,7 +8,10 @@
 #
 # Usage:
 #   integrator-watch.sh [SECONDS]   a pass every SECONDS (default 60, at least 10) until
-#                                   stopped; one watcher per repository (a second one exits 0
+#                                   stopped or the integrator is gone; the plugin's
+#                                   SessionStart hook starts it with the integrator's session
+#                                   (log: <git common dir>/herdr-agent-pool/
+#                                   integrator-watch.log); one watcher per repository (a second one exits 0
 #                                   at once; the pid is in <git common dir>/herdr-agent-pool/
 #                                   integrator-watch.pid)
 #   integrator-watch.sh once        one pass
@@ -35,7 +38,13 @@
 #      `working` or `blocked` again) and once every $HERDR_AGENT_POOL_COMPACT_COOLDOWN seconds
 #      (default 600). Never while it works or is blocked; a pass that compacts leaves the news
 #      for the next one. A transcript it cannot read means no compaction, said once on stderr.
-# One line on stdout per action (cleaned, refused, woke, COMPACT <name> <tokens>).
+#   5. Retries (first): `retry-stalled.py` resends to every agent of the repository whose last
+#      turn stopped on an API error (a network cut, a machine that slept; decision 0012). A
+#      pass that retries the integrator sends it nothing else.
+# One line on stdout per action (cleaned, refused, woke, COMPACT <name> <tokens>, RETRY ...).
+# The loop ends by itself once the integrator has been gone from herdr for 5 passes in a row
+# ($HERDR_AGENT_POOL_GONE_PASSES):
+# the SessionStart hook starts it detached, so it may outlive the session.
 #
 # Inside Claude Code only the integrator (CLAUDE_ROLE=integrator) runs it; the user may run it
 # from a herdr pane. Exit codes: 0 ok; 1 usage, settings, pool mode or role. Needs git, gh,
@@ -168,8 +177,10 @@ Run /herdr-agent-pool:integrate now: refresh the queue."
 }
 
 one_pass() {
-    local news=0 status
+    local news=0 status retried
+    retried=$("$dir/retry-stalled.py") && [[ -n "$retried" ]] && echo "$retried"
     clean_pass
+    [[ "$retried" != *"RETRY $name "* ]] || return 0   # it has its prompt: nothing else this pass
     news_pass || news=1
     status=$(integrator_status)
     compact_pass "$status" && return 0   # the news waits for the next pass
@@ -194,8 +205,11 @@ except BlockingIOError:
         fi
         echo "$$" > "$pstate/integrator-watch.pid"
         echo "integrator watcher $$: a pass every ${interval}s (stop it with kill $$)"
+        gone=0
         while :; do
             ( one_pass ) 8>&- || echo "integrator-watch: pass failed; next one in ${interval}s" >&2
+            if [[ -n "$(integrator_status)" ]]; then gone=0; else gone=$((gone + 1)); fi
+            [[ $gone -lt "${HERDR_AGENT_POOL_GONE_PASSES:-5}" ]] || { echo "integrator watcher $$: $name is gone from herdr; stopping"; exit 0; }
             sleep "$interval" 8>&-
         done ;;
 esac
