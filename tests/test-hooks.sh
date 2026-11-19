@@ -562,13 +562,15 @@ fi
     || { echo "FAIL  worktree-of: branch without a worktree"; fails=$((fails + 1)); }
 
 # Every `herdr agent prompt` in the skills sends the header: a literal message starts with it,
-# and a "$VAR" message is assigned with the header as its first line in the same file.
+# and a "$VAR" message is assigned with the header as its first line in the same skill (its
+# SKILL.md or one of its references/*.md, where message templates such as the brief live).
 if python3 - "$root/plugin/skills" <<'PY'
 import pathlib, re, sys
 header = "[herdr message from agent "
 bad = []
 for f in sorted(pathlib.Path(sys.argv[1]).glob("*/SKILL.md")):
-    text = f.read_text()
+    parts = [f, *sorted(f.parent.glob("references/*.md"))]
+    text = "\n".join(p.read_text() for p in parts)
     for m in re.finditer(r'herdr agent prompt (\S+) "([^"\n]*)', text):
         msg = m.group(2)
         var = re.fullmatch(r"\$\{?(\w+)\}?", msg)

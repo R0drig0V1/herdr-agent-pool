@@ -19,6 +19,15 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   `HERDR_AGENT_POOL_*`. The old names are not read: README, "Renamed from multi-agent-herdr",
   lists the moves; `setup` reports the old names a project still has. The installer also
   turns off `multi-agent-herdr@claude-code-herdr` in a project it sets up.
+- **Shorter prompts** (about 40% fewer tokens loaded per role, no rule or behaviour changed).
+  `commit`, `pr`, `integrate`, `coordinate` and `dispatch` keep the normal path in `SKILL.md`;
+  rare branches and message templates moved to `skills/<skill>/references/*.md`, read only
+  when the skill says so (the rare `integrate-pr.sh` exit codes, a red base, a PR that needs a
+  decision, cleanup failures, promotion, the dispatch brief, the PR body, no `gh`, no live
+  integrator). `template/CLAUDE.md` and the role prompts state each rule once and point to the
+  skill that details it. Projects already set up keep their own copies of those three files;
+  compare them with `template/` to take the shorter text. `tests/test-hooks.sh` now also
+  checks the message header in `references/*.md`.
 
 ### Added
 - `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
