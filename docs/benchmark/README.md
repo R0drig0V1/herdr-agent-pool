@@ -50,6 +50,7 @@ A second profile with slow checks and large tasks is proposed in
 | Agent-minutes, ideal wall | `benchmark/measure.py` | sum of the development agents' active spans; that sum / 5 is the wall time if 5 agents were busy all the time |
 | Turns, messages | `benchmark/measure.py` | API responses; `herdr agent prompt` calls sent and agent messages received |
 | Tokens | `benchmark/measure.py` | new tokens (input + cache writes + output) and cache reads, from the session transcripts |
+| Time waiting for a heavy slot | `benchmark/slot-waits.py` | per kind of check (development, merge verification, coordinator): how many waited, for how long, and how long they ran; from the run log of `resource-budget.py` |
 | Turns per stage | `benchmark/turn-stages.py` | a development agent's turns split into work, the `commit` skill, the `pr` skill and what follows the announcement; each session's first and largest context |
 
 About 97% of the tokens are cache reads: every turn reads the conversation again (about
