@@ -1,11 +1,11 @@
 <!-- Design of the benchmark's second profile, "heavy": slow checks, large tasks and tasks that
-     change code other tasks use. A proposal: nothing of it is built yet. The first profile and
-     every run so far are in README.md. -->
+     change code other tasks use. Built on 2026-11-20; no run yet. The first profile and its
+     runs are in README.md. -->
 
 # The heavy profile (design)
 
-Status: proposed on 2026-11-19, not built. The profile in [README.md](README.md) is called
-"light" below.
+Status: proposed on 2026-11-19, built on 2026-11-20 (the seed, the plan, the slot-wait log);
+no run yet. The profile in [README.md](README.md) is called "light" below.
 
 ## Why a second profile
 
@@ -25,9 +25,12 @@ tasks, did). The heavy profile changes the kind of work, not its amount.
 
 ## The setup
 
-- **Seed:** `textkit` after phases 1 and 2 (the final tree of a finished light run, with its
-  plan marked done), as the branch `heavy-seed` of `textkit-sandbox`: 20 public functions, a
-  command line, 5 ADRs. Agents have real code to read before they change it.
+- **Seed:** `textkit` after phases 1 and 2 (the final tree of light run 12, with its plan
+  marked done), as the branch `heavy-seed` of `textkit-sandbox`: 14 public functions, a
+  command line, 5 ADRs, 138 tests. Agents have real code to read before they change it. The
+  seed also extends the public-function rule to packages (the names in `__all__` of a
+  package's `__init__.py`) in `scripts/check.sh` and `tests/test_api.py`, so that the three
+  large tasks do not each rewrite it.
 - **Slow checks:** `scripts/check.sh` sleeps before the tests (`TEXTKIT_CHECK_SECONDS`,
   default 75; skipped in CI), so a failing check costs the wait too. The wait costs no
   tokens. With the machine's 2 heavy slots, every check of every agent and every merge
@@ -43,6 +46,12 @@ tasks, did). The heavy profile changes the kind of work, not its amount.
   | H5 | medium | Error hierarchy: `textkit/errors.py`; every public function raises a `TextkitError` instead of `ValueError`; all tests follow | touches every module; tests written in parallel still expect `ValueError` and fail only after the merge |
   | H6 | medium | Tokenizer API: `_tokens.words` returns tokens with offsets; its callers follow | changes code H1 and H3 may call |
   | H7-H10 | small | `dedent`, `center`, `ngrams`, `levenshtein`: one function each, as in phases 1-2 | keep the queue mixed; the baseline to compare against |
+
+  In the plan (`docs/phases/phase-3-text-tools.md` of the seed) they are T3.1 to T3.10: H4,
+  H5, H6 (T3.1 to T3.3), H1, H2, H3 (T3.4 to T3.6), H7 to H10 (T3.7 to T3.10). As written
+  before the review, only the three large tasks depend on another one (T3.1, the registry
+  their subcommands go into); the error hierarchy does not inherit from `ValueError`, so a
+  task written against `ValueError` in parallel turns red only once it is merged.
 
   Each large task: at least three modules and 40 tests. The numbered files (three ADRs) and
   the shared files (`README.md`, `CHANGELOG.md`, `textkit/__init__.py`) collide as before.
@@ -69,7 +78,7 @@ As in the light profile (`pr-stats.py`, `measure.py`), plus:
 |--------|--------|----------|
 | Turns per stage, by task size | `benchmark/turn-stages.py` | Does the ceremony still take most of a task's turns when the task is large? |
 | Largest context per session | `benchmark/turn-stages.py` | Do development agents pass 100,000 tokens? Is compaction needed for them too? |
-| Time waiting for a heavy slot | needs a line per run in `resource-budget.py` (label, seconds waited, seconds run) | Is the slot the bottleneck? Does the merge priority work? |
+| Time waiting for a heavy slot | `benchmark/slot-waits.py`, from the run log of `resource-budget.py` (label, seconds waited, seconds run, exit code) | Is the slot the bottleneck? Does the merge priority work? |
 | Bounces by cause | PR comments, by hand: text conflict, failed verification, review finding | What does a conflict of meaning cost against a conflict of text? |
 | Compactions of the integrator | `compact_boundary` lines of its transcript | After two or more, does it lose a PR's state or a user decision? |
 
@@ -96,10 +105,10 @@ Estimates from the light profile's per-turn numbers, not measurements:
 - Once: writing the seed, the phase file and the check (no agent tokens), and the plan
   review (10 to 15 minutes).
 
-## Open choices
+## Choices
 
-- 3 large tasks or 4 (a search index would be the fourth): each adds an estimated 6 million
-  cache reads.
-- The check's wait: 75 seconds makes 2 slots a clear bottleneck for 5 agents; 30 would make
-  them a mild one.
-- Whether the drill runs in single or pool mode (whichever the first two runs favour).
+- Three large tasks, not four (a search index would have been the fourth): each adds an
+  estimated 6 million cache reads.
+- The check waits 75 seconds: with 2 slots that is a clear bottleneck for 5 agents; 30 would
+  have made it a mild one.
+- Open: whether the drill runs in single or pool mode (whichever the first two runs favour).

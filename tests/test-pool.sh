@@ -1011,6 +1011,16 @@ for _ in $(seq 1 100); do grep -q "slot 0: sleep" <<<"$("$board" show)" && break
 check "resource-budget: --timeout gives up with 124" exits 124 "$rb" run --timeout 0.5 -- true
 kill "$holder_pid"; wait "$holder_pid" 2>/dev/null
 check "resource-budget: a killed holder frees its slot" "$rb" run --timeout 10 -- true
+runlog="$HERDR_AGENT_POOL_RESOURCES_DIR/runs.jsonl"
+check "resource-budget: the run log has the wait of the check that queued behind another" \
+    bash -c 'jq -es "[.[]|select(.label|test(\"^t[12]$\"))] | length == 2 and (map(.waited)|max) >= 0.4 and all(.ran >= 0.5 and .exit == 0 and .pool == \"heavy\")" "$1" >/dev/null' _ "$runlog"
+check "resource-budget: the run log has the command's exit code" \
+    bash -c 'jq -es "any(.exit == 7 and .ran != null)" "$1" >/dev/null' _ "$runlog"
+check "resource-budget: a run that got no slot is logged with no run time" \
+    bash -c 'jq -es "any(.exit == 124 and .ran == null and .waited >= 0.4)" "$1" >/dev/null' _ "$runlog"
+"$rb" run --label outer -- "$rb" run --label inner -- true
+check "resource-budget: a nested run is logged once, as the run that took the slot" \
+    bash -c 'jq -es "any(.label == \"outer\") and (any(.label == \"inner\") | not)" "$1" >/dev/null' _ "$runlog"
 agents a1 w1:p1 working /x  a2 w2:p1 idle /y  a3 w3:p1 "done" /z
 budget 2
 "$board" note "dev server + e2e" --gb 3 --minutes 20 --as a1 >/dev/null
