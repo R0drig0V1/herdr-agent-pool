@@ -62,6 +62,10 @@ Keys (all optional; a missing file means every default):
   integrator's context is above this many tokens, integrator-watch.sh sends it one
   `/compact` (at most once per idle period and once every 10 minutes); `0` turns it off.
   Pool mode ignores it.
+* `agent_compact_tokens` (default `100000`): both modes. When a development agent that
+  waits for a verdict (idle, its pull request open at the commit it is on) has a context
+  above this many tokens, the watchers send it one `/compact` per announced commit
+  (compact-waiting.py); `0` turns it off.
 * `agent_args` (default `DEFAULT_AGENT_ARGS`: `--strict-mcp-config` and a `--tools` list):
   the arguments `start-agent.sh` passes to `claude` for each development agent the dispatcher
   starts, one argument per item (non-empty one-line strings; `[]` gives Claude Code's
@@ -196,6 +200,7 @@ def defaults(root: str) -> dict[str, Any]:
         "numbered_files": {},
         "plan_ticks_in_merge": True,
         "integrator_compact_tokens": 120000,
+        "agent_compact_tokens": 100000,
         "agent_args": list(DEFAULT_AGENT_ARGS),
         "mode": "single",
         "integrator_pool": [],
@@ -310,10 +315,10 @@ def valid_branch(name: str) -> bool:
 
 
 def _check_scalar(path: str, key: str, value: Any) -> None:
-    """Validate a boolean (`plan_ticks_in_merge`) or a count (`integrator_compact_tokens`)."""
+    """Validate a boolean (`plan_ticks_in_merge`) or a count (the `*_compact_tokens`)."""
     if key == "plan_ticks_in_merge" and not isinstance(value, bool):
         raise ConfigError(f"{path}: {key} must be true or false, got {value!r}")
-    if key == "integrator_compact_tokens" and (
+    if key in ("integrator_compact_tokens", "agent_compact_tokens") and (
         isinstance(value, bool) or not isinstance(value, int) or value < 0
     ):
         raise ConfigError(f"{path}: {key} must be a non-negative integer (0: off), got {value!r}")
@@ -333,7 +338,7 @@ def _checked(path: str, key: str, value: Any) -> Any:
         return _verify_settings(path, value)
     elif key == "numbered_files":
         return _numbered_files(path, value)
-    elif key in ("plan_ticks_in_merge", "integrator_compact_tokens"):
+    elif key in ("plan_ticks_in_merge", "integrator_compact_tokens", "agent_compact_tokens"):
         _check_scalar(path, key, value)
     elif key == "protected_branches":
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):

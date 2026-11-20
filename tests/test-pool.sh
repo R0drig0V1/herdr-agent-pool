@@ -195,7 +195,8 @@ for json in '{"integrators": {"min": 3, "max": 2}}' '{"integrators": {"max": 17}
             '{"integrators": {"nudge_after_minutes": -1}}' '{"numbered_files": {"adr": "docs/(a)(b)"}}' \
             '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}' \
             '{"plan_ticks_in_merge": "no"}' '{"plan_ticks_in_merge": 0}' '{"integrator_compact_tokens": -1}' \
-            '{"integrator_compact_tokens": "120000"}' '{"integrator_compact_tokens": true}' '{"integrator_compact_tokens": 1.5}'; do
+            '{"integrator_compact_tokens": "120000"}' '{"integrator_compact_tokens": true}' '{"integrator_compact_tokens": 1.5}' \
+            '{"agent_compact_tokens": -1}' '{"agent_compact_tokens": "100000"}'; do
     printf '%s\n' "$json" > "$bad/.claude/herdr-agent-pool.json"
     "$pc" --root "$bad" >/dev/null 2>&1; status=$?
     check "project-config: rejects $json" [ "$status" == 1 ]
@@ -206,6 +207,8 @@ check "project-config: 0 turns the locked re-verify and the nudges off" \
 check "project-config: plan ticks in the merge by default" [ "$("$pc" --root "$work/nowhere" plan_ticks_in_merge)" == true ]
 check "project-config: compacts the integrator above 120000 tokens by default" \
     [ "$("$pc" --root "$work/nowhere" integrator_compact_tokens)" == 120000 ]
+check "project-config: compacts a waiting development agent above 100000 tokens by default" \
+    [ "$("$pc" --root "$work/nowhere" agent_compact_tokens)" == 100000 ]
 printf '%s\n' '{"integrator_compact_tokens": 0}' > "$bad/.claude/herdr-agent-pool.json"
 check "project-config: integrator_compact_tokens 0 (off) is valid" [ "$("$pc" --root "$bad" integrator_compact_tokens)" == 0 ]
 # The template's coordinator.sh repeats the default name rule.
@@ -1470,6 +1473,53 @@ check "retry: an error a retry cannot fix is not retried, said once" \
 check "retry: a development agent may not run it (exit 1)" \
     exits 1 env CLAUDECODE=1 CLAUDE_ROLE= bash -c 'cd "$1" && "$2"' _ "$single" "$rs"
 rm -f "$dtx"
+# compact-waiting.py: a development agent that waits for a verdict with a large context.
+cw="$scripts/compact-waiting.py"
+cpass() { (cd "$single" && env HERDR_ENV=1 "$@" "$cw" 2>&1); }
+dev_transcript() {  # dev_transcript <context tokens>: wdirty's last turn sent that many
+    mkdir -p "$(dirname "$dtx")"
+    jq -nc '{type: "user", message: {role: "user", content: "x"}}' > "$dtx"
+    jq -nc --argjson t "$1" '{type: "assistant", message: {model: "m", usage: {input_tokens: 2,
+        cache_creation_input_tokens: 1000, cache_read_input_tokens: ($t - 1002), output_tokens: 50}}}' >> "$dtx"
+}
+dev_pr() {  # dev_pr [<head>]: the open PR of feat/w-dirty at that head (none without one)
+    if [[ $# == 0 ]]; then echo '[]' > "$FAKE_GH/list-open.json"; return; fi
+    jq -n --arg h "$1" '[{number: 60, headRefName: "feat/w-dirty", headRefOid: $h, isDraft: false, labels: []}]' \
+        > "$FAKE_GH/list-open.json"
+}
+dev_compacts() { grep -c "^prompt wdirty /compact Keep: your task" "$FAKE_LOG"; }
+dhead=$(git -C "$dpath" rev-parse HEAD); cstate="$sst/compact-waiting/wdirty.json"
+agents integrator-single w1:p1 working "$single"  wdirty w9:p1 idle "$dpath"
+: > "$FAKE_LOG"; dev_transcript 150000; dev_pr; out=$(cpass)
+check "compact-waiting: an idle agent with no open PR is not waiting for a verdict" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(dev_compacts)"
+dev_pr 0000000000000000000000000000000000000000; out=$(cpass)
+check "compact-waiting: nor one whose PR is at another commit" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(dev_compacts)"
+dev_pr "$dhead"; dev_transcript 90000; out=$(cpass)
+check "compact-waiting: a waiting agent under the threshold is left alone" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(dev_compacts)"
+dev_transcript 150000
+agents integrator-single w1:p1 working "$single"  wdirty w9:p1 working "$dpath"; out=$(cpass)
+check "compact-waiting: a working agent is left alone" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(dev_compacts)"
+agents integrator-single w1:p1 working "$single"  wdirty w9:p1 "done" "$dpath"
+out=$(FAKE_GH="$work/no-gh" cpass); status=$?
+check "compact-waiting: gh failing compacts nothing, said on stderr, exit 0" \
+    bash -c '[[ "$1" == *"gh pr list failed"* && $2 == 0 && $3 == 0 ]]' _ "$out" "$status" "$(dev_compacts)"
+echo '{"agent_compact_tokens": 0}' > "$single/.claude/herdr-agent-pool.json"; out=$(cpass)
+rm -f "$single/.claude/herdr-agent-pool.json"
+check "compact-waiting: agent_compact_tokens 0 turns it off" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(dev_compacts)"
+out=$(cpass)
+check "compact-waiting: compacts the agent that waits over the threshold (COMPACT line)" \
+    bash -c '[[ "$1" == "COMPACT wdirty 150000" && $2 == 1 ]] && [[ $(jq -r .head "$4") == "$3" ]]' _ "$out" "$(dev_compacts)" "$dhead" "$cstate"
+out=$(cpass)
+check "compact-waiting: once per announced commit" bash -c '[[ -z "$1" && $2 == 1 ]]' _ "$out" "$(dev_compacts)"
+echo '{"head": "an-earlier-head"}' > "$cstate"; out=$(cpass)
+check "compact-waiting: again once a new commit was announced" bash -c '[[ "$1" == "COMPACT wdirty 150000" && $2 == 2 ]]' _ "$out" "$(dev_compacts)"
+echo '{"head": "an-earlier-head"}' > "$cstate"; api_error "$dtx" "API Error: Connection lost mid-response."; out=$(cpass)
+check "compact-waiting: an agent stopped by an API error is left to the retries" bash -c '[[ -z "$1" && $2 == 2 ]]' _ "$out" "$(dev_compacts)"
+check "compact-waiting: a development agent may not run it (exit 1)" \
+    exits 1 env CLAUDECODE=1 CLAUDE_ROLE= bash -c 'cd "$1" && "$2"' _ "$single" "$cw"
+dev_transcript 150000; out=$(wpass)
+check "watch: the pass compacts the waiting agent too" bash -c '[[ "$1" == *"COMPACT wdirty 150000"* && $2 == 3 ]]' _ "$out" "$(dev_compacts)"
+rm -f "$dtx" "$cstate"; open_list
 # The watcher runs it first; the integrator it retried gets nothing else in that pass.
 open_list 57:h57; wpass >/dev/null
 api_error "$itx" "API Error: Can't reach the API server"

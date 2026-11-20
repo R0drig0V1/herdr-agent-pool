@@ -283,7 +283,7 @@ except BlockingIOError:
     echo "$$" > "$state/watch.pid"
     echo "pool watcher $$: a nudge pass every ${interval}s (stop it with kill $$)"
     while :; do
-        ( "$dir/retry-stalled.py"; cmd_nudge ) 8>&- || echo "integrator-pool: nudge pass failed; next one in ${interval}s" >&2
+        ( "$dir/retry-stalled.py"; "$dir/compact-waiting.py"; cmd_nudge ) 8>&- || echo "integrator-pool: nudge pass failed; next one in ${interval}s" >&2
         sleep "$interval" 8>&-
     done
 }

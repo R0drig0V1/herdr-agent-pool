@@ -87,6 +87,7 @@ There are two modes, chosen by the project's settings file:
 | Script | `integrator-pool.sh` | Pool members: list, route, scale facts, spawn, stop, nudge, watch |
 | Script | `integrator-watch.sh` | Single mode's token-free watcher: wakes the idle integrator with news, cleans up merged worktrees |
 | Script | `retry-stalled.py` | Run by the watchers: asks agents whose last turn stopped on an API error to continue |
+| Script | `compact-waiting.py` | Run by the watchers: compacts development agents that wait for a verdict with a large context |
 | Script | `submit-pr.sh` | Run by the `pr` skill: rebase, checks, push, the PR and its announcement in one command |
 | Script | `resource-budget.py` | The machine's heavy and light slots, with a priority queue |
 | Script | `resource-board.sh` | The shared resource sheet: memory, sessions, slot holders, notes |

@@ -260,7 +260,9 @@ background; no Claude tokens) runs `nudge` every minute: when an open PR has wai
 for `integrators.nudge_after_minutes` (default 5; 0 turns it off), it prompts idle members that
 hold no claim, one per waiting PR, each at most once per that interval. A PR still unclaimed
 after 3 nudges is left to the coordinator, told once (a member may be declining it for a
-reason the watcher cannot see). A second `watch` for
+reason the watcher cannot see). Each pass also asks agents stopped by an API error to
+continue (`retry-stalled.py`, decision 0012) and compacts the development agents that wait
+for a verdict with a large context (`compact-waiting.py`, decision 0014). A second `watch` for
 the same repository exits at once (a kernel `flock`), so the coordinator restarts it safely.
 
 ## The base is red
@@ -314,7 +316,7 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | `git push --all/--mirror`, `gh pr merge` | blocked | blocked | blocked | allowed |
 | `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
 | `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
-| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>`, `integrator-watch.sh` (single mode only), `retry-stalled.py` | blocked | blocked | allowed | allowed |
+| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>`, `integrator-watch.sh` (single mode only), `retry-stalled.py`, `compact-waiting.py` | blocked | blocked | allowed | allowed |
 | Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
