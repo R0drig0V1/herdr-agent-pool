@@ -124,7 +124,7 @@ reviewed plan (`14b7d58` in `textkit-sandbox`).
 | Run | Configuration | Wall (min) | Ideal wall (min) | Open time mean / max (min) | Bounces | Messages sent | Integrator turns | New tokens | Cache reads |
 |-----|---------------|-----------:|-----------------:|---------------------------:|--------:|--------------:|-----------------:|-----------:|------------:|
 | H1 | single mode; main after decisions 0012 and 0013, the watcher fix and the `pr` skill committing with plain git | 39.1 | 30.7 | 7.5 / 22.2 | 7 | 49 | 94 | **1.61 M** | **47.3 M** |
-| H2 | as H1, in pool mode: a coordinator and 2 integrators | 38.5 | 29.5 | 6.5 / 18.2 | 6 | 74 | 236 (74 + 79 + 83) | 1.83 M | 62.7 M |
+| H2 | as H1, in pool mode: a coordinator and 2 integrators | 38.5 | 29.5 | 6.5 / 18.2 | 6 | 74 | 238 (76 + 79 + 83) | 1.83 M | 63.0 M |
 
 "Integrator turns" in pool mode: the coordinator's plus each integrator's.
 
@@ -149,8 +149,8 @@ reviewed plan (`14b7d58` in `textkit-sandbox`).
     Seven of the ten agents still loaded the `commit` skill.
 - **Run H2** (2026-11-20, branch `heavy2`). No API error, no pause.
   - **The pool did not pay: the same wall time, a third more tokens.** 38.5 minutes against
-    39.1; 62.7 M cache reads against 47.3 M. The development agents read the same (33.9 M
-    against 34.0 M); the whole difference is integration: 28.8 M for the coordinator (7.3 M)
+    39.1; 63.0 M cache reads against 47.3 M. The development agents read the same (33.9 M
+    against 34.0 M); the whole difference is integration: 29.0 M for the coordinator (7.5 M)
     and the two integrators (10.2 M and 11.3 M) against 13.3 M for the one integrator of H1.
   - **It did empty the queue sooner.** The last large pull request merged in minute 32
     (minute 39 in H1), and the large ones stayed open 13, 18 and 9 minutes (19, 22 and 15).
@@ -174,7 +174,7 @@ reviewed plan (`14b7d58` in `textkit-sandbox`).
 
 1. **Two integrators do not shorten a run whose plan ends in a chain.** With checks of 75
    seconds, one integrator kept three to five pull requests waiting for 15 minutes (H1); two
-   cut that wait by a third and cost 15 M more cache reads (H2), and the run ended at the
+   cut that wait by a third and cost 16 M more cache reads (H2), and the run ended at the
    same minute. One run each: the wall times are equal within noise, the token difference
    (33%) is not.
 2. **The heavy slots are not the limit** with 5 agents and 2 slots: 2 minutes of waiting in
