@@ -1,11 +1,11 @@
 <!-- Design of the benchmark's second profile, "heavy": slow checks, large tasks and tasks that
-     change code other tasks use. Built on 2026-11-20; no run yet. The first profile and its
-     runs are in README.md. -->
+     change code other tasks use. Built on 2026-11-20; its runs are at the end. The first
+     profile and its runs are in README.md. -->
 
 # The heavy profile (design)
 
 Status: proposed on 2026-11-19, built on 2026-11-20 (the seed, the plan, the slot-wait log);
-no run yet. The profile in [README.md](README.md) is called "light" below.
+one run so far ([Runs](#runs)). The profile in [README.md](README.md) is called "light" below.
 
 ## Why a second profile
 
@@ -112,3 +112,35 @@ Estimates from the light profile's per-turn numbers, not measurements:
 - The check waits 75 seconds: with 2 slots that is a clear bottleneck for 5 agents; 30 would
   have made it a mild one.
 - Open: whether the drill runs in single or pool mode (whichever the first two runs favour).
+
+## Runs
+
+The plan review ran once, before the first run: 32 minutes, three rounds, 34 findings (1
+critical, 11 high), all accepted at least in part. It kept the ten tasks and added a
+relation, "PR after X": the task starts at once but opens its pull request only once X is
+merged (the three large tasks after T3.1, the command registry). Every run starts from that
+reviewed plan (`14b7d58` in `textkit-sandbox`).
+
+| Run | Configuration | Wall (min) | Ideal wall (min) | Open time mean / max (min) | Bounces | Messages sent | Integrator turns | New tokens | Cache reads |
+|-----|---------------|-----------:|-----------------:|---------------------------:|--------:|--------------:|-----------------:|-----------:|------------:|
+| H1 | single mode; main after decisions 0012 and 0013, the watcher fix and the `pr` skill committing with plain git | 39.1 | 30.7 | 7.5 / 22.2 | 7 | 49 | 94 | 1.61 M | 47.3 M |
+
+- **Run H1** (2026-11-20, branch `heavy1`). No API error, no pause.
+  - **The slots were not the bottleneck.** 29 checks took a heavy slot (19 of development
+    agents, 10 merge verifications); 5 waited 5 seconds or more, 2 minutes in all, 54
+    seconds at most. The two slots were busy 55% of the time.
+  - **The integrator was.** From minute 17 to minute 32 three to five pull requests waited
+    for it. The three large ones stayed open 19, 15 and 22 minutes, a small one 2.
+  - **Bounces by cause** (7): three because the error hierarchy (T3.2) merged first and the
+    open pull request had to follow it (a conflict of meaning, as designed); two for
+    defects the integrator's review found (a crash on a lone surrogate, a quadratic pass
+    that its ADR called linear); one text conflict; one rebase that left duplicate
+    CHANGELOG lines.
+  - **Large tasks pass 100,000 tokens.** Their sessions reached 166,000, 179,000 and
+    197,000 tokens of context and made 60 to 71 turns; the three took 24.9 M of the 34.0 M
+    cache reads of the development agents. Half of the development cache reads (51%) came
+    after the announcement: a bounce is answered with the whole session in context.
+  - **The integrator was compacted once, late**: at 249,000 tokens, in minute 34. It was
+    never idle before.
+  - Turns per task by stage: work 17.8, commit 3.2, `pr` 3.0, after the announcement 12.7.
+    Seven of the ten agents still loaded the `commit` skill.
