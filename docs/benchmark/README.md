@@ -17,6 +17,9 @@ record: add every new run to [Runs](#runs), with what changed and what it showed
 - [What the runs show](#what-the-runs-show)
 - [Caveats](#caveats)
 
+A second profile with slow checks and large tasks is proposed in
+[heavy-profile.md](heavy-profile.md).
+
 ## The setup
 
 - **Project:** [`textkit-sandbox`](https://github.com/R0drig0V1/textkit-sandbox), public and
@@ -47,6 +50,7 @@ record: add every new run to [Runs](#runs), with what changed and what it showed
 | Agent-minutes, ideal wall | `benchmark/measure.py` | sum of the development agents' active spans; that sum / 5 is the wall time if 5 agents were busy all the time |
 | Turns, messages | `benchmark/measure.py` | API responses; `herdr agent prompt` calls sent and agent messages received |
 | Tokens | `benchmark/measure.py` | new tokens (input + cache writes + output) and cache reads, from the session transcripts |
+| Turns per stage | `benchmark/turn-stages.py` | a development agent's turns split into work, the `commit` skill, the `pr` skill and what follows the announcement; each session's first and largest context |
 
 About 97% of the tokens are cache reads: every turn reads the conversation again (about
 70,000 tokens per turn in these runs). The number of turns drives the cost far more than the
