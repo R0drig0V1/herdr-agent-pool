@@ -5,7 +5,7 @@
 # The heavy profile (design)
 
 Status: proposed on 2026-11-19, built on 2026-11-20 (the seed, the plan, the slot-wait log);
-one run so far ([Runs](#runs)). The profile in [README.md](README.md) is called "light" below.
+two runs so far ([Runs](#runs)). The profile in [README.md](README.md) is called "light" below.
 
 ## Why a second profile
 
@@ -123,7 +123,10 @@ reviewed plan (`14b7d58` in `textkit-sandbox`).
 
 | Run | Configuration | Wall (min) | Ideal wall (min) | Open time mean / max (min) | Bounces | Messages sent | Integrator turns | New tokens | Cache reads |
 |-----|---------------|-----------:|-----------------:|---------------------------:|--------:|--------------:|-----------------:|-----------:|------------:|
-| H1 | single mode; main after decisions 0012 and 0013, the watcher fix and the `pr` skill committing with plain git | 39.1 | 30.7 | 7.5 / 22.2 | 7 | 49 | 94 | 1.61 M | 47.3 M |
+| H1 | single mode; main after decisions 0012 and 0013, the watcher fix and the `pr` skill committing with plain git | 39.1 | 30.7 | 7.5 / 22.2 | 7 | 49 | 94 | **1.61 M** | **47.3 M** |
+| H2 | as H1, in pool mode: a coordinator and 2 integrators | 38.5 | 29.5 | 6.5 / 18.2 | 6 | 74 | 236 (74 + 79 + 83) | 1.83 M | 62.7 M |
+
+"Integrator turns" in pool mode: the coordinator's plus each integrator's.
 
 - **Run H1** (2026-11-20, branch `heavy1`). No API error, no pause.
   - **The slots were not the bottleneck.** 29 checks took a heavy slot (19 of development
@@ -144,3 +147,43 @@ reviewed plan (`14b7d58` in `textkit-sandbox`).
     never idle before.
   - Turns per task by stage: work 17.8, commit 3.2, `pr` 3.0, after the announcement 12.7.
     Seven of the ten agents still loaded the `commit` skill.
+- **Run H2** (2026-11-20, branch `heavy2`). No API error, no pause.
+  - **The pool did not pay: the same wall time, a third more tokens.** 38.5 minutes against
+    39.1; 62.7 M cache reads against 47.3 M. The development agents read the same (33.9 M
+    against 34.0 M); the whole difference is integration: 28.8 M for the coordinator (7.3 M)
+    and the two integrators (10.2 M and 11.3 M) against 13.3 M for the one integrator of H1.
+  - **It did empty the queue sooner.** The last large pull request merged in minute 32
+    (minute 39 in H1), and the large ones stayed open 13, 18 and 9 minutes (19, 22 and 15).
+    But the plan ends in a chain (T3.8 opens its PR after T3.7, T3.10 after T3.8): T3.7 was
+    bounced for a text conflict and merged in minute 28, so the chain ended in minute 38.5.
+    The end of the run was set by the plan, not by the integrators.
+  - **The slots were busier**: 39 checks (18 of development agents, 13 merge verifications,
+    8 of the coordinator after ticking the plan), 12 waited 5 seconds or more, 7.3 minutes
+    in all, 72 seconds at most; busy 72% of the time. A pull request verified while another
+    lands is verified again on the moved base, a second 77 second check.
+  - **No pool member was compacted**: the integrators ended at 198,000 and 228,000 tokens
+    of context. The watcher that compacts an idle integrator (decision 0010) runs in single
+    mode only.
+  - **Bounces by cause** (6): three for defects the review found (two standard-library
+    `ValueError`s that escaped, a `RecursionError` on a long run of `*`); two because T3.2
+    merged first; one text conflict.
+  - Turns per task by stage: work 20.4, commit 1.3, `pr` 3.0, after the announcement 13.5.
+    Four of the ten agents loaded the `commit` skill.
+
+## What the heavy runs show
+
+1. **Two integrators do not shorten a run whose plan ends in a chain.** With checks of 75
+   seconds, one integrator kept three to five pull requests waiting for 15 minutes (H1); two
+   cut that wait by a third and cost 15 M more cache reads (H2), and the run ended at the
+   same minute. One run each: the wall times are equal within noise, the token difference
+   (33%) is not.
+2. **The heavy slots are not the limit** with 5 agents and 2 slots: 2 minutes of waiting in
+   single mode, 7 in pool mode.
+3. **A bounce of a large task is the most expensive event.** A large session works at
+   150,000 to 200,000 tokens of context when its verdict arrives; half of the development
+   cache reads come after the announcement in both runs.
+4. **The integrator's review finds real defects in large tasks** (5 of the 13 bounces of
+   the two runs), which the light profile's one-function tasks never showed.
+5. **Compaction comes late or not at all**: at 249,000 tokens in H1 (the integrator was
+   never idle before), never for the pool members in H2.
+
