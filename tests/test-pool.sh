@@ -65,7 +65,8 @@ fake="$work/bin"; mkdir -p "$fake"
 cat > "$fake/herdr" <<'FAKE'
 #!/usr/bin/env bash
 # Fake herdr: `agent list` prints $FAKE_AGENTS; `pane current` reports $FAKE_PANE; mutating
-# commands are logged to $FAKE_LOG (one line each). $FAKE_HERDR_DOWN makes every call fail.
+# commands are logged to $FAKE_LOG (one line each; `agent prompt` also writes its whole message
+# to $FAKE_PROMPT_FILE when that is set). $FAKE_HERDR_DOWN makes every call fail.
 # `agent start` also writes its arguments to $FAKE_ARGV, one per line, when it is set.
 [[ -z "${FAKE_HERDR_DOWN:-}" ]] || { echo "herdr: no server" >&2; exit 1; }
 case "$1 $2" in
@@ -80,7 +81,8 @@ case "$1 $2" in
     "agent start") shift 2; echo "agent-start $*" >> "$FAKE_LOG"
         [[ -z "${FAKE_ARGV:-}" ]] || printf '%s\n' "$@" > "$FAKE_ARGV"
         [[ "${FAKE_START_RC:-0}" == 0 ]] || { echo '{"error":{"code":"agent_not_ready"}}'; exit 1; } ;;
-    "agent prompt") printf 'prompt %s %s\n' "$3" "$(head -1 <<<"$4")" >> "$FAKE_LOG" ;;
+    "agent prompt") printf 'prompt %s %s\n' "$3" "$(head -1 <<<"$4")" >> "$FAKE_LOG"
+        [[ -z "${FAKE_PROMPT_FILE:-}" ]] || printf '%s\n' "$4" > "$FAKE_PROMPT_FILE" ;;
     *) exit 2 ;;
 esac
 FAKE
@@ -99,6 +101,7 @@ case "$1 $2" in
         else cat "$FAKE_GH/list.json"; fi ;;
     "api user") echo "${FAKE_GH_USER:-tester}" ;;
     "pr comment") echo "comment $3" >> "$FAKE_GH/log" ;;
+    "pr create") shift 2; echo "create $*" >> "$FAKE_GH/log"; echo "https://github.com/o/r/pull/${FAKE_GH_NEW_PR:-77}" ;;
     *) exit 2 ;;
 esac
 FAKE
@@ -1488,6 +1491,68 @@ out=$(cd "$single" && env HERDR_ENV=1 HERDR_AGENT_POOL_GONE_PASSES=1 "$iw" 10 2>
 check "watch: the loop ends once the integrator is gone from herdr" \
     bash -c '[[ $1 == 0 && "$2" == *"integrator-single is gone from herdr; stopping"* ]]' _ "$status" "$out"
 unset FAKE_PANES; rm -f "$FAKE_GH/list-open.json" "$FAKE_GH/list-merged.json"
+
+# submit-pr.sh: one command from committed work to an announced PR ----------------------------
+sp="$scripts/submit-pr.sh"
+swt="$work/single-submit"
+git -C "$single" fetch --quiet origin && git -C "$single" merge --quiet --ff-only origin/main
+git -C "$single" worktree add --quiet -b feat/sub "$swt" origin/main
+export FAKE_PROMPT_FILE="$work/last-prompt.txt"
+submit() { (cd "$swt" && env HERDR_ENV=1 FAKE_PANE=w7:p1 CHECK_HOOK= "$sp" "$@" 2>&1); }
+announces() { grep -c "^prompt integrator-single \[herdr message from agent subber; not from the user\]" "$FAKE_LOG"; }
+agents integrator-single w1:p1 idle "$single"  subber w7:p1 working "$swt"
+echo '[]' > "$FAKE_GH/list-open.json"; : > "$FAKE_GH/log"; : > "$FAKE_LOG"
+check "submit: refuses the main worktree (exit 1)" exits 1 bash -c 'cd "$1" && HERDR_ENV=1 "$2" --title t </dev/null' _ "$single" "$sp"
+echo one > "$swt/one.txt"
+out=$(submit --title "feat: one" <<<"body"); rc=$?
+check "submit: uncommitted changes stop it (exit 2), listed" bash -c '[[ $1 == 2 && "$2" == *"one.txt"* ]]' _ "$rc" "$out"
+git -C "$swt" add one.txt && git -C "$swt" commit --quiet -m "feat: one"
+out=$(submit <<<"body"); rc=$?
+check "submit: a first submission needs a title (exit 1)" bash -c '[[ $1 == 1 && "$2" == *"--title"* ]]' _ "$rc" "$out"
+# The base moves meanwhile (another PR merged): the submission rebases onto it.
+git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B main origin/main \
+    && echo moved > "$sdev/moved.txt" && git -C "$sdev" add -A && git -C "$sdev" commit --quiet -m moved && git -C "$sdev" push --quiet origin main
+out=$(submit --title "feat: one" <<<"## Summary"); rc=$?
+check "submit: rebases, checks, pushes, opens the PR and announces it (exit 0)" \
+    bash -c '[[ $1 == 0 && "$2" == *"REBASED on origin/main"*"CHECK exit 0"*"PUSHED feat/sub"*"PR #77 https://github.com/o/r/pull/77"*"ANNOUNCED to integrator-single"*"RESULT submitted"* ]]' _ "$rc" "$out"
+check "submit: the pushed branch holds the commit on top of the moved base" \
+    bash -c 'git -C "$1" cat-file -e refs/heads/feat/sub:one.txt && git -C "$1" cat-file -e refs/heads/feat/sub:moved.txt' _ "$sorigin"
+check "submit: gh pr create got the base, the title and the body" \
+    bash -c 'grep -q "^create --base main --head feat/sub --title feat: one --body-file " "$1" && [[ "$(cat "$2")" == "## Summary" ]]' \
+    _ "$FAKE_GH/log" "$(git -C "$swt" rev-parse --absolute-git-dir)/herdr-agent-pool-pr-body.md"
+check "submit: one announcement, from the agent's herdr name" [ "$(announces)" == 1 ]
+# A bounce: the PR is open, the base moved onto the same file, the fix is submitted again.
+subhead=$(git -C "$sorigin" rev-parse refs/heads/feat/sub)
+jq -n --arg h "$subhead" '[{number: 77, url: "https://github.com/o/r/pull/77", title: "feat: one", headRefName: "feat/sub", headRefOid: $h, isDraft: false, labels: [], author: {login: "tester"}}]' > "$FAKE_GH/list-open.json"
+git -C "$sdev" fetch --quiet origin && git -C "$sdev" checkout --quiet -B main origin/main \
+    && echo theirs > "$sdev/one.txt" && git -C "$sdev" add -A && git -C "$sdev" commit --quiet -m "their one" && git -C "$sdev" push --quiet origin main
+out=$(submit); rc=$?
+check "submit: a rebase conflict stops it (exit 3) and names the file" bash -c '[[ $1 == 3 && "$2" == *"one.txt"* ]]' _ "$rc" "$out"
+out=$(submit); rc=$?
+check "submit: a rebase in progress stops it (exit 3)" bash -c '[[ $1 == 3 && "$2" == *"rebase is in progress"* ]]' _ "$rc" "$out"
+echo both > "$swt/one.txt" && git -C "$swt" add one.txt && GIT_EDITOR=true git -C "$swt" rebase --continue >/dev/null 2>&1
+: > "$FAKE_GH/log"; out=$(submit --risky "the merge of one.txt"); rc=$?
+check "submit: a fixed bounce is force-pushed with a lease and announced again, without a new PR" \
+    bash -c '[[ $1 == 0 && "$2" == *"PR #77"*"ANNOUNCED to integrator-single"* && ! -s "$3" && $4 == 2 ]] && [[ "$(git -C "$5" show refs/heads/feat/sub:one.txt)" == both ]]' \
+    _ "$rc" "$out" "$FAKE_GH/log" "$(announces)" "$sorigin"
+check "submit: the second announcement says the bounce was fixed and what is risky" \
+    bash -c 'grep -q "^PR #77 ready (bounce fixed, new head " "$1" && grep -qx "Risky: the merge of one.txt" "$1" && grep -q "^Checks: scripts/check.sh exit 0 on " "$1"' _ "$FAKE_PROMPT_FILE"
+out=$(submit); rc=$?
+check "submit: a tree that already passed is not checked again" bash -c '[[ $1 == 0 && "$2" == *"CHECK skipped"* ]]' _ "$rc" "$out"
+jq '.[0].author.login = "someone-else"' "$FAKE_GH/list-open.json" > "$FAKE_GH/l.new" && mv "$FAKE_GH/l.new" "$FAKE_GH/list-open.json"
+out=$(submit); rc=$?
+check "submit: a PR opened by another account is not touched (exit 6)" bash -c '[[ $1 == 6 && "$2" == *"ask the user"* ]]' _ "$rc" "$out"
+jq '.[0].author.login = "tester"' "$FAKE_GH/list-open.json" > "$FAKE_GH/l.new" && mv "$FAKE_GH/l.new" "$FAKE_GH/list-open.json"
+agents subber w7:p1 working "$swt"
+out=$(submit); rc=$?
+check "submit: no live integrator: the PR stays open, not announced (exit 5)" bash -c '[[ $1 == 5 && "$2" == *"NOT announced"* ]]' _ "$rc" "$out"
+agents integrator-single w1:p1 idle "$single"  subber w7:p1 working "$swt"
+printf '#!/bin/sh\necho "boom: 1 test failed"\nexit 1\n' > "$swt/scripts/check.sh"
+git -C "$swt" add -A && git -C "$swt" commit --quiet -m "break the check"
+n=$(announces); out=$(submit); rc=$?
+check "submit: a red check stops before the push (exit 4) and shows its last lines" \
+    bash -c '[[ $1 == 4 && "$2" == *"CHECK exit 1"*"boom: 1 test failed"* && "$2" != *PUSHED* && $3 == "$4" ]]' _ "$rc" "$out" "$(announces)" "$n"
+rm -f "$FAKE_GH/list-open.json"; unset FAKE_PROMPT_FILE
 
 echo
 echo "$fails failure(s)"
