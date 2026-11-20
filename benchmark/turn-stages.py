@@ -29,6 +29,7 @@ import collections
 import glob
 import json
 import os
+import re
 from typing import Any
 
 STAGES = ("work", "commit", "pr", "after")
@@ -97,6 +98,8 @@ def main() -> int:
         if not turns:
             continue
         role = os.path.basename(os.path.dirname(path)).split(f"-{a.repo}-", 1)[1]
+        if re.fullmatch(r"integrator-\d+", role):  # pool mode: an integrator's verify worktree
+            continue
         per: collections.Counter = collections.Counter()
         for turn, stage in zip(turns, stage_turns(turns)):
             per[stage] += 1

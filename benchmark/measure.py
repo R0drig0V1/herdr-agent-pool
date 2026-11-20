@@ -115,7 +115,8 @@ def main() -> int:
                 continue
             c = m["counts"]
             span = minutes(m["first"], m["last"])
-            if role != "(main worktree)":
+            # Pool mode: the verify worktrees (<repo>-integrator-<n>) hold integrators.
+            if role != "(main worktree)" and not re.fullmatch(r"integrator-\d+", role):
                 dev_minutes += span
             print(
                 f"{role:20} " + " ".join(f"{k}={c[k]}" for k in COUNTED)
