@@ -129,7 +129,7 @@ reviewed plan (`14b7d58` in `textkit-sandbox`).
   - **The slots were not the bottleneck.** 29 checks took a heavy slot (19 of development
     agents, 10 merge verifications); 5 waited 5 seconds or more, 2 minutes in all, 54
     seconds at most. The two slots were busy 55% of the time.
-  - **The integrator was.** From minute 17 to minute 32 three to five pull requests waited
+  - **The integrator was.** From minute 16 to minute 30 three to five pull requests waited
     for it. The three large ones stayed open 19, 15 and 22 minutes, a small one 2.
   - **Bounces by cause** (7): three because the error hierarchy (T3.2) merged first and the
     open pull request had to follow it (a conflict of meaning, as designed); two for
