@@ -25,4 +25,4 @@ after changing it, measure it the same way and record the result.
 | [0010](0010-slim-integrator.md) | A slimmer single-mode integrator: plan ticks in the merge, a token-free watcher, compaction | accepted, to be measured |
 | [0011](0011-lean-agent-start.md) | Start development agents with a lean tool set | accepted, to be measured |
 | [0012](0012-retry-agents-stopped-by-an-api-error.md) | Ask agents stopped by an API error to continue | accepted |
-| [0013](0013-submit-in-one-command.md) | Submit a task in one command | accepted, to be measured |
+| [0013](0013-submit-in-one-command.md) | Submit a task in one command | accepted, measured (run 11) |

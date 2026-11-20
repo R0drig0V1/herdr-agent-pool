@@ -1,6 +1,6 @@
 # 0013. Submit a task in one command
 
-- Status: accepted, to be measured
+- Status: accepted, measured in benchmark run 11
 - Date: 2026-11-19
 
 ## Context
@@ -63,8 +63,11 @@ Details that also save tokens or time:
 
 ## Consequences
 
-- Expected, to be measured in the next run: a task merged at the first try goes from about
-  17 turns to about 11, and a bounce costs fewer turns.
+- Measured in run 11: the `pr` skill takes 3.1 turns per task against 6.8, a task merged at
+  the first try 12 to 14 turns against about 17, and the development agents' cache reads fall
+  17% (13.9 M against 16.8 M). Less than expected, because the agents still ran the `commit`
+  skill before it (2.8 turns per task): the `pr` skill named it as a reference and they took
+  that as a step. The skill now says to commit directly.
 - A commit made before the checks ran can be red; the agent fixes it in a second commit (or
   amends it while nothing is pushed). The PR's merge is still verified as a whole.
 - The force push after a bounce happens inside the script, where the guard hooks do not see
