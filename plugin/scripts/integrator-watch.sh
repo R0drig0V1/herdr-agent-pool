@@ -41,6 +41,9 @@
 #   5. Retries (first): `retry-stalled.py` resends to every agent of the repository whose last
 #      turn stopped on an API error (a network cut, a machine that slept; decision 0012). A
 #      pass that retries the integrator sends it nothing else.
+#   6. Waiting agents (after the retries): `compact-waiting.py` compacts the development
+#      agents that wait for a verdict with a context above `agent_compact_tokens` (decision
+#      0014).
 # One line on stdout per action (cleaned, refused, woke, COMPACT <name> <tokens>, RETRY ...).
 # The loop ends by itself once the integrator has been gone from herdr for 5 passes in a row
 # ($HERDR_AGENT_POOL_GONE_PASSES):
@@ -179,6 +182,7 @@ Run /herdr-agent-pool:integrate now: refresh the queue."
 one_pass() {
     local news=0 status retried
     retried=$("$dir/retry-stalled.py") && [[ -n "$retried" ]] && echo "$retried"
+    "$dir/compact-waiting.py"
     clean_pass
     [[ "$retried" != *"RETRY $name "* ]] || return 0   # it has its prompt: nothing else this pass
     news_pass || news=1

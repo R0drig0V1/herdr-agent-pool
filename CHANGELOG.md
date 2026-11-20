@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-20
+
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
@@ -42,6 +44,16 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   and that command, with one exit code per outcome. Measured before: a development agent
   spent about 9 of its 17 turns per task on those steps as separate commands. The checks run
   once, on the rebased tree, and their output goes to a log instead of the agent's context.
+- Development agents that wait for a verdict are compacted (decision 0014): a bounce is
+  answered with the whole session in context, and in the benchmark's heavy runs half of the
+  development agents' cache reads came after the announcement. The watchers now run
+  `compact-waiting.py` every minute: an idle agent whose pull request is open at the commit
+  it is on, with a context above `agent_compact_tokens` (100000; `0` turns it off), gets one
+  `/compact` with what to keep, once per announced commit. Both modes.
+- Pool mode compacts its idle members and coordinator too (decision 0010's amendment):
+  `integrator-pool.sh compact`, run by `watch`, with the rule single mode already had
+  (`integrator_compact_tokens`, once per idle period and every 10 minutes). In a measured
+  run the pool's integrators ended at 198,000 and 228,000 tokens of context.
 - Agents stopped by an API error are asked to continue (decision 0012): a network cut or a
   machine that slept ends an agent's turn, and it then waited until someone wrote to it (a
   measured run stood still for two and a half hours). The watchers now run
