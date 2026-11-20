@@ -97,6 +97,8 @@ All on 2026-11-19, the same seed, Opus 5.5 with effort high, at most 5 developme
 | 8 | as run 7, pool mode: a coordinator and 3 integrators; phase 3 already reviewed | 25.5 | 19.4 (10 agents) | 2.1 / 6.6 | 14 | 13 | 124 | 73 + 124 + 112 + 75 | 2.55 M | 93.2 M |
 | 9 | as run 6, plus the watcher and compaction of the integrator (decision 0010) and the lean start of development agents (decision 0011) | 20.3 | 16.9 | 1.6 / 5.8 | 8 | 8 | 32 | 101 | 1.24 M | **27.3 M** |
 | 10 | as run 9, plus mentions rewritten at a renumber (decision 0009's amendment) | 26.7 | 27.5 | 2.6 / 5.9 | 9 | 9 | 56 | 103 | 1.33 M | 29.8 M |
+| 11 | as run 10, plus one command to submit a task (decision 0013) and retries after an API error (decision 0012) | not comparable (the machine slept about 8 hours) | - | - | 9 | 8 | 50 | 118 | 1.40 M | **25.1 M** |
+| 12 | as run 11, repeated for the times | 20.7 | 14.2 | 1.8 / 4.6 | 9 | 9 | 37 | 96 | **1.22 M** | **24.4 M** |
 
 Notes per run:
 
@@ -162,6 +164,29 @@ and 4.
   re-sorted the README and CHANGELOG rows, which bounced two open PRs. Of the 9 bounces, 6
   were code appended to one module, 2 came from that commit and 1 was a review finding (an
   ADR and its code disagreed). A development agent's turn read 42,200 tokens, as in run 9.
+- **Run 11.** The machine slept from minute 5 for about 8 hours, so the times do not count;
+  the turns and tokens do. It also tested decision 0012 for real: while the machine slept the
+  watcher retried the integrator and one agent six times each, and once the network was back
+  both went on without anyone writing to them. The first attempt was stopped after 40
+  seconds: the watcher had not started (it failed without an argument, as the SessionStart
+  hook starts it; fixed). With `submit-pr.sh` the `pr` skill took 3.1 turns per task against
+  6.8 in run 9, and a task merged at the first try 12 to 14 turns against about 17; the
+  development agents made 353 turns and 13.9 M cache reads against 402 and 16.8 M (-12% and
+  -17%). They still ran the `commit` skill first (2.8 turns per task), because the `pr` skill
+  named it. What follows the announcement is now the largest stage (7.3 turns per task, 45%
+  of the development cache reads): three turns even without a bounce (the report, then the
+  merged verdict's board note and final line). The integrator was compacted twice, at
+  138,000 and 148,000 tokens.
+- **Run 12.** Run 11 again, with the machine awake: no API error, no pause. The tokens and
+  turns repeat run 11 (353 development turns in both; 24.4 M cache reads against 25.1 M), so
+  the saving of `submit-pr.sh` holds: 11% fewer cache reads than run 9. The wall time does
+  not move: 20.7 minutes against 20.3 in runs 6 and 9, although the agents worked less (71
+  agent-minutes, an ideal wall of 14.2 minutes against 16.9). The other 6.5 minutes are not
+  agent work: the nine bounces all fell on six of the first nine pull requests (most of
+  them conflicts in code added to the same module, item 6), and the last three tasks ran one at a time because each
+  depends on the one before (minutes 13 to 20). The integrator was compacted once, at
+  167,000 tokens. A local branch left by an earlier run made the integrator pick another
+  branch name for one task; it changed nothing else.
 
 ## What the runs show
 
@@ -198,7 +223,9 @@ and 4.
    takes 14%, the `pr` skill 31% (rebase, a second run of the checks, push, the PR, its own
    name, the announcement, a summary) and what follows the announcement 29% (the verdict, a
    bounce, the final report). A task merged at the first try takes about 17 turns, 11 of them
-   after the code is written.
+   after the code is written. One command for the mechanical steps (decision 0013) took the
+   `pr` skill from 6.8 to 3.1 turns per task (run 11); what follows the announcement is then
+   the largest stage.
 9. **Compaction that waits for an idle integrator comes late when it is never idle** (run 10:
    196,000 tokens against a threshold of 120,000).
 10. **Reviewing a phase's plan blocks it** (run 7): review the next phase while the current one
@@ -211,7 +238,8 @@ and 4.
 - One run per configuration: differences of a few minutes are noise; the large ones (plan,
   lander wake-up, append conflicts) are not. Runs 9 and 10 ran almost the same plugin and
   differ by 6 minutes of wall time (30%) and 9% of cache reads: the tokens per turn repeat
-  well, the wall time does not.
+  well, the wall time does not. Runs 11 and 12 ran the same plugin and differ by 3% of cache
+  reads and have the same number of development turns.
 - Run 2 changed the plugin and the plan at once; runs 3 and 4 reuse its plan, so 2 against 4
   compares the plugins and 2 against 3 isolates the lander.
 - Agent-minutes count a session from its first to its last activity, including waits for a

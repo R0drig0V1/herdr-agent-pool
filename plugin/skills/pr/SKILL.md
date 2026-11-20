@@ -15,8 +15,9 @@ description: Open a pull request for the current work on GitHub with a clear sum
 Commit everything that belongs to the task, in your own branch and worktree (never the base
 branch, `main` or the main worktree): stage the files by name, never secrets, build output or
 dependencies, and write a Conventional Commit in English (`<type>(<scope>): <subject>`, a
-body that says what changed and why). `/herdr-agent-pool:commit` has the details; you need not
-run the full checks first, the next step does.
+body that says what changed and why; `git commit -F -` with a heredoc keeps its format). Do
+it with plain `git add` and `git commit`, in one command: do not load the `commit` skill for
+it, and do not run the full checks first, the next step does.
 
 ## 2. Submit
 
