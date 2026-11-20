@@ -49,7 +49,9 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   one message to continue, with a backoff from 1 to 15 minutes and at most 20 retries; errors
   a retry cannot fix are left alone. Single mode's watcher now starts with the integrator's
   session (the SessionStart hook; `HERDR_AGENT_POOL_NO_WATCH=1` turns it off) instead of on
-  its first `integrate` pass, and ends when the integrator is gone from herdr.
+  its first `integrate` pass, and ends when the integrator is gone from herdr. (Started
+  without an argument, as the hook does, the watcher used to stop at once on an unbound
+  variable: fixed, and tested.)
 - A slimmer single-mode integrator (decision 0010): its mechanical steps moved into scripts
   that spend no tokens.
   - `integrate-pr.sh` ticks the plan tasks the PR body lists by id (`T1.2`) under "Plan tasks

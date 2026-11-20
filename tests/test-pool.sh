@@ -1488,8 +1488,18 @@ check "watch: a second watcher exits 0 at once" bash -c '[[ $1 == 0 && "$2" == *
 kill "$(cat "$sst/integrator-watch.pid")" 2>/dev/null; wait "$iwatcher" 2>/dev/null
 agents wdirty w9:p1 idle "$dpath"
 out=$(cd "$single" && env HERDR_ENV=1 HERDR_AGENT_POOL_GONE_PASSES=1 "$iw" 10 2>&1); status=$?
+out2=$(cd "$single" && env HERDR_ENV=1 HERDR_AGENT_POOL_GONE_PASSES=1 "$iw" 2>&1); status2=$?
+check "watch: runs without an argument, as the SessionStart hook starts it (60 s)" \
+    bash -c '[[ $1 == 0 && "$2" == *"a pass every 60s"* && "$2" != *unbound* ]]' _ "$status2" "$out2"
 check "watch: the loop ends once the integrator is gone from herdr" \
     bash -c '[[ $1 == 0 && "$2" == *"integrator-single is gone from herdr; stopping"* ]]' _ "$status" "$out"
+# The real SessionStart hook starts the real watcher (the agent in the pane stays unnamed in
+# the fake list, so the watcher sees no integrator and ends after its first pass).
+agents - w1:p1 idle "$single"; rm -f "$sst/integrator-watch.log"
+ss "$single" CLAUDE_ROLE=integrator HERDR_AGENT_POOL_NO_WATCH= HERDR_AGENT_POOL_GONE_PASSES=1 FAKE_PANE=w1:p1 >/dev/null
+until_true grep -q "is gone from herdr; stopping" "$sst/integrator-watch.log" 2>/dev/null
+check "session-start: the hook's watcher starts and runs its passes (integrator-watch.log)" \
+    grep -q "integrator watcher .*: a pass every 60s" "$sst/integrator-watch.log"
 unset FAKE_PANES; rm -f "$FAKE_GH/list-open.json" "$FAKE_GH/list-merged.json"
 
 # submit-pr.sh: one command from committed work to an announced PR ----------------------------
