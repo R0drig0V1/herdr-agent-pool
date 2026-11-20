@@ -191,7 +191,7 @@ case "${1:-60}" in
     once) one_pass ;;
     *[!0-9]*|"") die "usage: integrator-watch.sh [SECONDS] | once" ;;
     *)
-        interval="$1"
+        interval="${1:-60}"
         [[ "$interval" -ge 10 ]] || die "the interval must be at least 10 seconds"
         # One watcher per repository: a kernel flock on fd 8 for the loop's lifetime.
         exec 8>>"$pstate/integrator-watch.lock" || exit 1
