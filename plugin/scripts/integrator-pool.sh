@@ -26,7 +26,14 @@
 #                                      integrators.nudge_after_minutes, prompt idle members
 #                                      (one per waiting PR, each at most once per that interval);
 #                                      after 3 nudges a PR is left to the coordinator (told once)
-#   integrator-pool.sh watch [S]       nudge every S seconds (default 60) until stopped; one
+#   integrator-pool.sh compact         one pass: an idle or done member, or the coordinator,
+#                                      whose context is above integrator_compact_tokens gets
+#                                      one `/compact <what to keep>` (once per idle period and
+#                                      per $HERDR_AGENT_POOL_COMPACT_COOLDOWN seconds, default
+#                                      600; decision 0010); `COMPACT <name> <tokens>` each
+#   integrator-pool.sh watch [S]       every S seconds (default 60) until stopped: retries of
+#                                      agents stopped by an API error (retry-stalled.py),
+#                                      compactions (compact-waiting.py, compact) and nudge; one
 #                                      watcher per repository (a second one exits 0 at once).
 #                                      No Claude tokens: the coordinator starts it in the
 #                                      background, or the user in a herdr pane
@@ -40,7 +47,7 @@
 # linked worktree of this repository that is on a branch (agents-in-repo.py --dev-only).
 # `max` is the one hard bound: spawn refuses a number above it.
 #
-# spawn, stop, nudge and watch act on herdr agents, so inside Claude Code only the
+# spawn, stop, nudge, compact and watch act on herdr agents, so inside Claude Code only the
 # coordinator (CLAUDE_ROLE=coordinator) may run them; the user may run them from a shell. stop
 # only closes a workspace this script opened (it records it under the pool's state directory).
 #
@@ -266,6 +273,49 @@ PR #$1 still waits unclaimed after $NUDGE_MAX nudges to idle integrators (each a
         && echo "PR #$1: told $(cfg .coordinator_name) after $NUDGE_MAX nudges"
 }
 
+# What a compacted member or coordinator must keep (decision 0010, extended to pool mode).
+member_compact="/compact Keep: every PR you claimed and its state (verifying, bounced, held, waiting \
+for the merge lock), the verdicts not yet sent to their authors, what the coordinator asked of you \
+and everything the user decided. Drop: old tool output, diffs and logs already acted on; GitHub and \
+pool-state.py hold the rest."
+coordinator_compact="/compact Keep: the plan progress (phase, tasks done, running and next), every \
+development agent and its task, the pool's members and their load, the merge reports not yet ticked \
+in the plan, and everything the user asked or decided. Drop: old tool output, diffs and logs already \
+acted on; GitHub, pool-state.py and docs/phases/ hold the rest."
+
+# compact_one <name> <status> <limit> <text>: one /compact when the idle agent's context is over
+# the limit; at most once per idle period (until it is seen working or blocked again) and once
+# per cooldown. A transcript that cannot be read means no compaction.
+compact_one() {
+    local name=$1 status=$2 limit=$3 text=$4 f now last tokens
+    f="$state/watch/compact-$name"
+    if [[ "$status" != idle && "$status" != "done" ]]; then rm -f "$f.idle"; return 0; fi
+    [[ ! -e "$f.idle" ]] || return 0
+    now=$(date +%s); last=$(cat "$f.last" 2>/dev/null || echo 0)
+    (( now - last >= ${HERDR_AGENT_POOL_COMPACT_COOLDOWN:-600} )) || return 0
+    tokens=$("$dir/context-tokens.py" "$name" 2>/dev/null) || return 0
+    (( tokens > limit )) || return 0
+    herdr agent prompt "$name" "$text" >/dev/null 2>&1 || return 0
+    echo "$now" > "$f.last"; touch "$f.idle"
+    echo "COMPACT $name $tokens"
+}
+
+cmd_compact() {
+    need_pool; may_act
+    local limit lines name status
+    limit=$(cfg .integrator_compact_tokens)
+    [[ "$limit" -gt 0 ]] || return 0
+    mkdir -p "$state/watch"
+    lines=$(live_members) || exit 2
+    for name in $(cfg '.integrator_pool[]'); do
+        status=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' <<<"$lines")
+        [[ -z "$status" ]] || compact_one "$name" "$status" "$limit" "$member_compact"
+    done
+    name=$(cfg .coordinator_name)
+    status=$("$dir/agents-in-repo.py" --name "$name" --main-worktree 2>/dev/null | head -n 1 | cut -f3)
+    [[ -z "$status" ]] || compact_one "$name" "$status" "$limit" "$coordinator_compact"
+}
+
 cmd_watch() {
     need_pool; may_act
     local interval="${1:-60}"
@@ -283,7 +333,7 @@ except BlockingIOError:
     echo "$$" > "$state/watch.pid"
     echo "pool watcher $$: a nudge pass every ${interval}s (stop it with kill $$)"
     while :; do
-        ( "$dir/retry-stalled.py"; "$dir/compact-waiting.py"; cmd_nudge ) 8>&- || echo "integrator-pool: nudge pass failed; next one in ${interval}s" >&2
+        ( "$dir/retry-stalled.py"; "$dir/compact-waiting.py"; cmd_compact; cmd_nudge ) 8>&- || echo "integrator-pool: nudge pass failed; next one in ${interval}s" >&2
         sleep "$interval" 8>&-
     done
 }
@@ -314,9 +364,10 @@ case "${1:-}" in
     desired) need_pool; read -r want dev live <<<"$(desired)"; echo "desired=$want development_agents=$dev live=$live" ;;
     scale) cmd_scale ;;
     nudge) cmd_nudge ;;
+    compact) cmd_compact ;;
     watch) [[ $# -le 2 ]] || die "usage: integrator-pool.sh watch [seconds]"; cmd_watch "${2:-60}" ;;
     spawn) [[ $# == 2 ]] || die "usage: integrator-pool.sh spawn <n>"; cmd_spawn "$2" ;;
     stop) [[ $# == 2 || ( $# == 3 && "$3" == --remove-worktree ) ]] \
               || die "usage: integrator-pool.sh stop <n> [--remove-worktree]"; cmd_stop "$2" "${3:-}" ;;
-    *) sed -n '10,30p' "$0" >&2; exit 1 ;;
+    *) sed -n '10,38p' "$0" >&2; exit 1 ;;
 esac

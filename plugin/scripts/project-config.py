@@ -58,10 +58,11 @@ Keys (all optional; a missing file means every default):
   tasks a PR lists under "Plan tasks completed" in `docs/phases/*.md` inside the merge
   commit (plan-tick.py); `false` leaves the ticking to the integrator. Pool mode ignores it
   (the coordinator ticks from the merge reports).
-* `integrator_compact_tokens` (default `120000`): single mode only. When the idle
-  integrator's context is above this many tokens, integrator-watch.sh sends it one
-  `/compact` (at most once per idle period and once every 10 minutes); `0` turns it off.
-  Pool mode ignores it.
+* `integrator_compact_tokens` (default `120000`): when an idle integrator's context is
+  above this many tokens, its watcher sends it one `/compact` (at most once per idle period
+  and once every 10 minutes); `0` turns it off. Single mode: the integrator
+  (integrator-watch.sh). Pool mode: each member and the coordinator
+  (`integrator-pool.sh compact`, run by `watch`).
 * `agent_compact_tokens` (default `100000`): both modes. When a development agent that
   waits for a verdict (idle, its pull request open at the commit it is on) has a context
   above this many tokens, the watchers send it one `/compact` per announced commit

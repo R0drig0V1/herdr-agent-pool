@@ -92,3 +92,17 @@ measured: the compaction itself; the next run records it.
 - How to tell it still holds: integrator turns per merged PR and the idle gaps after merges,
   against runs 5 and 6; for the compaction, cache-read tokens per integrator turn and the
   `COMPACT` lines, against run 7.
+
+## Amendment (2026-11-20): pool mode too
+
+The pool's members and its coordinator were never compacted: in the benchmark's heavy run H2
+(`docs/benchmark/heavy-profile.md`) the two integrators ended at 198,000 and 228,000 tokens
+of context. `integrator-pool.sh compact`, run by `integrator-pool.sh watch` every minute,
+applies the same rule to each live member and to the coordinator: idle or done, context
+above `integrator_compact_tokens`, at most once per idle period and once every 10 minutes.
+A member keeps its claimed PRs and their state and the verdicts not yet sent; the
+coordinator keeps the plan progress, the agents and their tasks, the pool's state and the
+merge reports not yet ticked. As in single mode, an integrator that is never idle is not
+compacted: in heavy run H1 the single integrator reached 249,000 tokens before its first
+idle minute. Not measured in a run.
+

@@ -1166,6 +1166,36 @@ check "pool nudge: after 3 nudges the coordinator is told, not the members" \
     bash -c 'grep -q "prompt coordinator-proj \[herdr message from the pool watcher" "$1" && ! grep -q "prompt integrator" "$1"' _ "$FAKE_LOG"
 : > "$FAKE_LOG"; nudge >/dev/null
 check "pool nudge: the coordinator is told once" [ ! -s "$FAKE_LOG" ]
+# integrator-pool.sh compact: an idle member or coordinator with a large context is compacted.
+pcompact() { (cd "$proj" && env HERDR_ENV=1 HERDR_AGENT_POOL_CLAUDE_PROJECTS="$work/pool-projects" "$@" "$pool" compact 2>&1); }
+ptx() {  # ptx <name> <cwd> <context tokens>: that agent's last turn sent that many tokens
+    local f="$work/pool-projects/${2//[^A-Za-z0-9]/-}/sess-$1.jsonl"
+    mkdir -p "$(dirname "$f")"
+    jq -nc --argjson t "$3" '{type: "assistant", message: {model: "m", usage: {input_tokens: 2,
+        cache_creation_input_tokens: 1000, cache_read_input_tokens: ($t - 1002), output_tokens: 50}}}' > "$f"
+}
+pcompacts() { grep -c "^prompt $1 /compact Keep: " "$FAKE_LOG"; }
+ptx integrator-proj-1 "$wt1" 150000; ptx integrator-proj-2 "$wt2" 150000; ptx coordinator-proj "$proj" 150000
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 idle "$wt2"  coordinator-proj w1:p1 "done" "$proj"
+: > "$FAKE_LOG"; out=$(pcompact)
+check "pool compact: the idle member and the done coordinator over the threshold are compacted" \
+    bash -c '[[ "$1" == *"COMPACT integrator-proj-2 150000"* && "$1" == *"COMPACT coordinator-proj 150000"* && $2 == 1 && $3 == 1 ]]' \
+    _ "$out" "$(pcompacts integrator-proj-2)" "$(pcompacts coordinator-proj)"
+check "pool compact: the working member is left alone" [ "$(pcompacts integrator-proj-1)" == 0 ]
+out=$(pcompact HERDR_AGENT_POOL_COMPACT_COOLDOWN=0)
+check "pool compact: not twice in the same idle period" bash -c '[[ -z "$1" && $2 == 1 ]]' _ "$out" "$(pcompacts integrator-proj-2)"
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 working "$wt2"; pcompact >/dev/null
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 idle "$wt2"; out=$(pcompact)
+check "pool compact: not again within the cooldown" bash -c '[[ -z "$1" && $2 == 1 ]]' _ "$out" "$(pcompacts integrator-proj-2)"
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 working "$wt2"; pcompact >/dev/null
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 idle "$wt2"; out=$(pcompact HERDR_AGENT_POOL_COMPACT_COOLDOWN=0)
+check "pool compact: a new idle period after the cooldown compacts again" \
+    bash -c '[[ "$1" == "COMPACT integrator-proj-2 150000" && $2 == 2 ]]' _ "$out" "$(pcompacts integrator-proj-2)"
+ptx integrator-proj-1 "$wt1" 90000; agents integrator-proj-1 w2:p1 idle "$wt1"  integrator-proj-2 w4:p1 working "$wt2"; out=$(pcompact)
+check "pool compact: an idle member under the threshold is left alone" bash -c '[[ -z "$1" && $2 == 0 ]]' _ "$out" "$(pcompacts integrator-proj-1)"
+(cd "$proj" && env CLAUDECODE=1 CLAUDE_ROLE=integrator HERDR_ENV=1 "$pool" compact >/dev/null 2>&1); status=$?
+check "pool compact: refused to a Claude session that is not the coordinator" [ "$status" == 1 ]
+agents integrator-proj-1 w2:p1 working "$wt1"  integrator-proj-2 w4:p1 idle "$wt2"; : > "$FAKE_LOG"
 (cd "$proj" && exec env HERDR_ENV=1 "$pool" watch 10 > "$work/watch.out" 2>&1) & watcher=$!
 until_true test -s "$st/watch.pid"
 out=$(cd "$proj" && env HERDR_ENV=1 "$pool" watch 10 2>&1); status=$?

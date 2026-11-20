@@ -261,8 +261,10 @@ for `integrators.nudge_after_minutes` (default 5; 0 turns it off), it prompts id
 hold no claim, one per waiting PR, each at most once per that interval. A PR still unclaimed
 after 3 nudges is left to the coordinator, told once (a member may be declining it for a
 reason the watcher cannot see). Each pass also asks agents stopped by an API error to
-continue (`retry-stalled.py`, decision 0012) and compacts the development agents that wait
-for a verdict with a large context (`compact-waiting.py`, decision 0014). A second `watch` for
+continue (`retry-stalled.py`, decision 0012), compacts the development agents that wait
+for a verdict with a large context (`compact-waiting.py`, decision 0014), and compacts an
+idle member or coordinator whose context is above `integrator_compact_tokens`
+(`integrator-pool.sh compact`, decision 0010). A second `watch` for
 the same repository exits at once (a kernel `flock`), so the coordinator restarts it safely.
 
 ## The base is red
