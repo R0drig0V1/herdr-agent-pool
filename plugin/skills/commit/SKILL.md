@@ -3,10 +3,7 @@ name: commit
 description: Create a well-formed git commit for this repository (Conventional Commits, English, no emojis) after running the project checks. Use when the user asks to commit, "haz un commit", "commitea", or after finishing a logical unit of work they want saved.
 ---
 
-<!--
-commit skill of the herdr-agent-pool plugin. Unchanged from multi-agent 0.1.0's `commit`
-skill apart from this header.
--->
+<!-- commit skill. Rare branches: references/checks.md. -->
 
 # Commit
 
@@ -21,46 +18,28 @@ git diff --staged   # staged
 git log --oneline -10   # match the existing style
 ```
 
-- If the changes mix unrelated concerns (e.g. a bug fix and a new feature), propose splitting
-  them into several commits and stage per concern (`git add <paths>`).
-- **Never stage**: `.env` or any secret/credential, `.venv/`, `node_modules/`, build output,
-  data dumps, large binaries. If one of those is staged, unstage it and tell the user.
+- Unrelated concerns mixed (a bug fix and a new feature): propose several commits and stage
+  per concern.
+- **Never stage** `.env` or any secret or credential, `.venv/`, `node_modules/`, build output,
+  data dumps, large binaries. If one is staged, unstage it and tell the user.
 
 ## 2. Verify before committing
 
-**Is the base red?** First:
-
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show
-```
-
-It prints nothing while `<base>` is green. A `BASE ... IS RED` banner names failing tests and
-the one agent that owns their fix: do **not** fix those tests in your branch (unless you are
-that owner), and do not let them stop you: when only those tests fail, go on and say so
-(`base red: <tests>`) in your report and, for a PR, under Test plan. Rebase after the fix
-lands. Show the banner to the user.
-
-Run from the workspace root and fix or report failures. Do not commit red checks unless the
-user explicitly says so (failures of only the base-red tests above are not yours).
-
-```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show      # prints nothing while the base is green
 "${CLAUDE_PLUGIN_ROOT}/scripts/resource-budget.py" run --label "check $(git branch --show-current)" -- scripts/check.sh; echo "exit=$?"
 ```
 
-The checks run inside one of the machine's heavy slots (`resource-budget.py run`): every
-agent on this computer shares a small number of them, so a full test suite may first wait
-("waiting for one of N heavy slot(s)"); let it wait, and never run the suite outside the
-wrapper or several suites at once. `resource-board.sh show` shows who holds each slot. A
-long wait that blocks something urgent (a bounce to fix) is a
-`RESOURCE REQUEST` to the coordinator in pool mode (or a note to the user in single mode),
-not a reason to bypass the wrapper. With `--timeout S`, exit 124 means no slot was free in
-time: nothing ran; say so, do not run the suite another way.
-
-`scripts/check.sh` holds the project's lint, type and test commands. If it does not exist or
-still prints the "no checks configured" warning, tell the user once.
-
-If the change needs a companion artefact (a migration for a schema change, a regenerated
-lockfile, an updated `docs/` page), make sure it is in the same commit.
+- Fix or report failures. Do not commit red checks unless the user explicitly says so.
+- A `BASE ... IS RED` banner: show it to the user and read
+  `${CLAUDE_PLUGIN_ROOT}/skills/commit/references/checks.md` first. Never fix the tests it
+  names in your branch, unless you are the owner it names.
+- The checks may first wait for one of the machine's shared heavy slots: let it wait. Never
+  run the suite outside the wrapper or several suites at once. A wait that blocks something
+  urgent, or exit 124: same reference.
+- `scripts/check.sh` missing, or it prints "no checks configured": tell the user once.
+- A companion artefact (a migration for a schema change, a regenerated lockfile, an updated
+  `docs/` page) goes in the same commit.
 
 ## 3. Message
 
@@ -73,10 +52,9 @@ Conventional Commits, **in English, no emojis**, imperative mood, subject ≤ 72
 ```
 
 - `type`: feat, fix, refactor, perf, test, docs, build, ci, chore.
-- `scope`: the package or area touched (look at `git log` for the scopes in use), e.g. `api`,
-  `docs`, `claude`, `infra`.
+- `scope`: the package or area touched (`git log` shows the scopes in use).
 - Mention migrations or breaking changes explicitly in the body.
-- End the message with the co-author / attribution trailer this environment specifies, if any.
+- End with the co-author / attribution trailer this environment specifies, if any.
 
 Use a heredoc so formatting survives:
 
@@ -85,7 +63,6 @@ git commit -F - <<'MSG'
 feat(api): add user login endpoint
 
 - Validate credentials against the users table
-- Add tests for wrong password and locked account
 MSG
 ```
 

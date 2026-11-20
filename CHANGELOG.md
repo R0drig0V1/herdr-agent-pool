@@ -8,9 +8,96 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-20
+
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
+- The README is short: what the plugin does, the diagram, install, the skills, the core rules
+  and a documentation index. Every detail it held moved to the new `docs/reference.md`.
+- Fewer conflicts and interruptions, from a measured benchmark (docs/benchmark/):
+  - the template's `.gitattributes` marks `CHANGELOG.md` and the docs indexes `merge=union`,
+    so parallel PRs that append at the same spot no longer bounce (README, "Fewer conflicts");
+  - the dispatcher runs `/herdr-agent-pool:improve-plan` before a phase's first dispatch when
+    the phase has no review;
+  - the `sessions_guideline` counts working agents only: idle and done sessions (often of
+    other repositories) no longer block a dispatch or make the dispatcher ask the user, and
+    working agents over the guideline are reported, not a stop; only low memory stops it;
+  - renumbering at merge also rewrites the lines of the PR that name the number by its kind
+    (`ADR 0001`, `adr_0001`), not only the file name, links and index rows, so a renumbered
+    ADR leaves no stale mention behind and needs no follow-up PR (decision 0009);
+  - the `pr` skill fetches with `--prune` before rebasing and after a rejected push of a new
+    branch, so a stale `origin/<branch>` is not mistaken for someone else's branch.
+- Numbered files (`numbered_files`: migrations, ADRs) are numbered at merge time, not at
+  dispatch. Authors take the next free number on their own base, so their checks pass, and
+  `integrate-pr.sh` (new `renumber.py`) moves a PR's new files to the next free numbers on
+  the base it merges onto, rewrites their names, index rows and links in the PR's files,
+  prints one `RENUMBERED` line per rename (also in the merge commit message) and verifies
+  the renumbered tree; re-merges onto a moved base renumber again. `union-rows.py` keeps two
+  index rows with a number being renumbered (`--allow-key`). The `dispatch` skill no longer
+  reserves numbers; `pool-state.py reserve` still works but is not used by it. In a measured
+  run, a reserved 0002 failed a "contiguous from 0001" check while 0001 was unfinished, and
+  the agent stopped to ask the user.
+- One command submits a task (decision 0013): `submit-pr.sh` rebases on the base, runs the
+  checks in a heavy slot, pushes, opens the PR and announces it to the integrator; after a
+  bounce the same command pushes the fix and announces again. The `pr` skill is now a commit
+  and that command, with one exit code per outcome. Measured before: a development agent
+  spent about 9 of its 17 turns per task on those steps as separate commands. The checks run
+  once, on the rebased tree, and their output goes to a log instead of the agent's context.
+- Development agents that wait for a verdict are compacted (decision 0014): a bounce is
+  answered with the whole session in context, and in the benchmark's heavy runs half of the
+  development agents' cache reads came after the announcement. The watchers now run
+  `compact-waiting.py` every minute: an idle agent whose pull request is open at the commit
+  it is on, with a context above `agent_compact_tokens` (100000; `0` turns it off), gets one
+  `/compact` with what to keep, once per announced commit. Both modes.
+- Pool mode compacts its idle members and coordinator too (decision 0010's amendment):
+  `integrator-pool.sh compact`, run by `watch`, with the rule single mode already had
+  (`integrator_compact_tokens`, once per idle period and every 10 minutes). In a measured
+  run the pool's integrators ended at 198,000 and 228,000 tokens of context.
+- Agents stopped by an API error are asked to continue (decision 0012): a network cut or a
+  machine that slept ends an agent's turn, and it then waited until someone wrote to it (a
+  measured run stood still for two and a half hours). The watchers now run
+  `retry-stalled.py` every minute: an idle agent whose transcript ends with an API error gets
+  one message to continue, with a backoff from 1 to 15 minutes and at most 20 retries; errors
+  a retry cannot fix are left alone. Single mode's watcher now starts with the integrator's
+  session (the SessionStart hook; `HERDR_AGENT_POOL_NO_WATCH=1` turns it off) instead of on
+  its first `integrate` pass, and ends when the integrator is gone from herdr. (Started
+  without an argument, as the hook does, the watcher used to stop at once on an unbound
+  variable: fixed, and tested.)
+- A slimmer single-mode integrator (decision 0010): its mechanical steps moved into scripts
+  that spend no tokens.
+  - `integrate-pr.sh` ticks the plan tasks the PR body lists by id (`T1.2`) under "Plan tasks
+    completed" in `docs/phases/*.md` inside the merge commit, before the verification (new
+    `plan-tick.py`; one `PLAN-TICKED` or `PLAN-UNTICKED` line each, also in the commit
+    message); re-merges tick again. No separate `docs(plan)` commit per PR. The new setting
+    `plan_ticks_in_merge` (default `true`) turns it off; pool mode is unchanged.
+  - New `integrator-watch.sh`, started by the `integrate` skill in the background: every
+    minute it cleans up the worktrees `cleanup-worktree.sh --list` reports `ready`, and wakes
+    the integrator, only when it is idle or done, once per item, about open PRs that wait for
+    a verdict and queued PRs the lander merged or took out of the queue. In a measured run
+    the integrator sat idle 14 minutes after lander merges nothing told it about.
+  - The watcher also compacts the integrator: when it is idle or done and its context (read
+    from its Claude Code transcript by the new `context-tokens.py`) is above the new setting
+    `integrator_compact_tokens` (default 120000; 0 turns it off), it types one `/compact`
+    with what to keep (open PRs and their state, pending verdicts, the plan progress, what
+    the user asked), at most once per idle period and once every 10 minutes, never while it
+    works or is blocked. In a measured run (30 tasks) the integrator's context grew from 46.6k
+    to 301.6k tokens, and its 116 turns re-read 20.4M cache tokens, a third of the run.
+  - The `pr` skill's body template lists each completed task by its id.
+- `install.sh` is now the whole per-repository setup, one command instead of three steps. It
+  installs the plugin for the project with the `claude` CLI when it is not installed yet
+  (`--no-plugin` skips it), checks `jq`, `python3`, `gh`, herdr and herdr's Claude
+  integration, asks before running `herdr integration install claude`, and ends with a
+  report of the machine and only the steps that are left. `/herdr-agent-pool:setup` is no
+  longer a required step. herdr itself is never installed by it.
+- `install.sh` refuses to write through a symbolic link or outside the repository, and stops
+  before copying when `.claude/settings.json` is valid JSON but not an object.
+- The integrator no longer tells the other agents that the base moved after a merge, and an
+  author no longer rebases or force-pushes a branch it has announced unless it bounced. Every
+  PR is already verified merged onto the current base. In a measured run (1 integrator, 3
+  agents, 6 tasks) those messages were a third of all messages, some reached agents that had
+  finished, and one made an author rewrite a branch under verification, which left its PR
+  closed instead of merged.
 - **Renamed to `herdr-agent-pool`**, so it no longer shares its names with the separate
   two-level plugin in claude-code-herdr: marketplace `herdr-agent-pool`, plugin id
   `herdr-agent-pool@herdr-agent-pool`, skills `/herdr-agent-pool:<skill>`, settings
@@ -19,8 +106,53 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   `HERDR_AGENT_POOL_*`. The old names are not read: README, "Renamed from multi-agent-herdr",
   lists the moves; `setup` reports the old names a project still has. The installer also
   turns off `multi-agent-herdr@claude-code-herdr` in a project it sets up.
+- **Shorter prompts** (about 40% fewer tokens loaded per role, no rule or behaviour changed).
+  `commit`, `pr`, `integrate`, `coordinate` and `dispatch` keep the normal path in `SKILL.md`;
+  rare branches and message templates moved to `skills/<skill>/references/*.md`, read only
+  when the skill says so (the rare `integrate-pr.sh` exit codes, a red base, a PR that needs a
+  decision, cleanup failures, promotion, the dispatch brief, the PR body, no `gh`, no live
+  integrator). `template/CLAUDE.md` and the role prompts state each rule once and point to the
+  skill that details it. Projects already set up keep their own copies of those three files;
+  compare them with `template/` to take the shorter text. `tests/test-hooks.sh` now also
+  checks the message header in `references/*.md`.
+- **Lean development agents.** `dispatch` starts them with the new `start-agent.sh`, which
+  passes the new `agent_args` setting to `claude`. Its default, `--strict-mcp-config --tools
+  "Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion"`, cut one turn's start-up
+  context from about 26,000-29,000 tokens to about 16,000; every turn re-reads it, and it was
+  about 70% of a development agent's cache reads in the benchmark. Development agents no
+  longer have subagents, web tools, `TodoWrite` or `Monitor`; `[]` restores Claude Code's
+  defaults. The integrator and the coordinator are unchanged (decision 0011).
 
 ### Added
+- `docs/decisions/`: the plugin's own design decisions (0001-0009), each with its context,
+  alternatives and evidence; `docs/benchmark/`: the method and the four first runs of the
+  benchmark (five agents, an 18-task backlog in the public `textkit-sandbox`), with
+  `benchmark/measure.py` (turns, messages, tokens from session transcripts) and
+  `benchmark/pr-stats.py` (PR timings, bounces, force pushes from GitHub).
+- `install.sh` detects a machine that knows this GitHub repository as a marketplace with
+  another name (set up before the rename, or declared so in the user's settings). There,
+  `claude plugin marketplace add` answers "already on disk", adds nothing, and the plugin is
+  then "not found in marketplace". The installer names the other marketplace and asks before
+  removing it (that also uninstalls the plugins installed from it); without a terminal, on
+  "no" and in a dry run it prints the commands instead. README, Install, and the `setup`
+  skill describe the same fix by hand.
+- `install.sh` reports the `claude` CLI's own reason when it refuses to install the plugin,
+  and does not take a project-scope install of another repository for this one's.
+- Rule: ask the user before working on a pull request that another GitHub account opened,
+  every time (README, "Rules"; the project template's CLAUDE.md; the `integrate` and `pr`
+  skills). `integrate-pr.sh` refuses such a PR (exit 2) unless it gets
+  `--author-ok <the PR's author>`.
+- `land.py`, the lander (docs/lander.md): phase 1 of coordination through GitHub state. One
+  run, in a per-base concurrency group, drains the PRs labelled `queue` oldest first; gates
+  on draft, CI of the head commit, approval of the head commit (a person's for `risk:high`)
+  and an open `base-red` issue; merges `--no-ff`, runs the full check on the merge and
+  pushes it unforced, merging again when the base moved. Conflicts and red checks bounce
+  with a counted comment, and the one over `--max-rounds` adds `needs-human`. The queue label
+  is the approval by default (`--approval review` also asks for an approving review, and a
+  person's for `risk:high`); PRs from forks are not landed. `--watch SECONDS` keeps it
+  running in a terminal, without GitHub Actions. `--dry-run` is
+  a shadow mode. Reference workflow in docs/workflows/land.yml; tests in
+  tests/test-lander.sh, run by CI.
 - `issue` skill: any role writes a GitHub issue for work left for later (out of scope, blocked,
   a known limitation or an open question), after a duplicate search: evidence, verifiable
   acceptance criteria, scope, risk, size and `Depends on`, using only existing labels and

@@ -42,8 +42,9 @@ Keys (all optional; a missing file means every default):
 * `numbered_files` (default `{}`): numbered files that parallel branches must not number
   alike, as `{kind: regex}`; the regex matches a whole repository path and captures the
   number in its one group, e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md",
-  "migration": "src/app/migrations/(\\d{4})_.*\\.sql"}`. `pool-state.py reserve <kind>`
-  hands out the next free number. Kinds look like `[a-z][a-z0-9_-]*`.
+  "migration": "src/app/migrations/(\\d{4})_.*\\.sql"}`. Authors take the next free number
+  on their base; integrate-pr.sh renumbers a PR's new files at merge (renumber.py). Kinds
+  look like `[a-z][a-z0-9_-]*`.
 * `verify` (default: every field empty): how `verify-merge.sh` runs the project's
   `scripts/check.sh` on a merge. Its keys, all optional:
   `check_env` (`{}`): variables added to the check's environment on every merge
@@ -53,6 +54,25 @@ Keys (all optional; a missing file means every default):
   top of `check_env` (a docs-only fast lane; off while `docs_only_paths` is empty). Names
   must look like `[A-Za-z_][A-Za-z0-9_]*` and may not start with `CLAUDE_`, `HERDR_` or
   `HERDR_AGENT_POOL_` (identity variables); values are strings without newlines.
+* `plan_ticks_in_merge` (default `true`): single mode only. integrate-pr.sh ticks the plan
+  tasks a PR lists under "Plan tasks completed" in `docs/phases/*.md` inside the merge
+  commit (plan-tick.py); `false` leaves the ticking to the integrator. Pool mode ignores it
+  (the coordinator ticks from the merge reports).
+* `integrator_compact_tokens` (default `120000`): when an idle integrator's context is
+  above this many tokens, its watcher sends it one `/compact` (at most once per idle period
+  and once every 10 minutes); `0` turns it off. Single mode: the integrator
+  (integrator-watch.sh). Pool mode: each member and the coordinator
+  (`integrator-pool.sh compact`, run by `watch`).
+* `agent_compact_tokens` (default `100000`): both modes. When a development agent that
+  waits for a verdict (idle, its pull request open at the commit it is on) has a context
+  above this many tokens, the watchers send it one `/compact` per announced commit
+  (compact-waiting.py); `0` turns it off.
+* `agent_args` (default `DEFAULT_AGENT_ARGS`: `--strict-mcp-config` and a `--tools` list):
+  the arguments `start-agent.sh` passes to `claude` for each development agent the dispatcher
+  starts, one argument per item (non-empty one-line strings; `[]` gives Claude Code's
+  defaults). Every turn re-reads the start-up context, so tools and MCP servers an agent
+  never uses are paid for on every turn (docs/decisions/0011-lean-agent-start.md). The
+  integrator and coordinator sessions do not use it.
 
 Derived, never written in the file: `mode` (`single` or `pool`) and `integrator_pool` (the
 pool members' herdr names, `<integrator_name>-<n>` for n = 1..max; empty in single mode).
@@ -108,6 +128,13 @@ VERIFY_DEFAULTS: dict[str, Any] = {"check_env": {}, "docs_only_paths": [], "docs
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RESERVED_ENV = ("CLAUDE_", "HERDR_", "HERDR_AGENT_POOL_")
 DERIVED = ("mode", "integrator_pool")
+# No MCP servers and only the tools the development workflow uses (commit, pr, the brief).
+# Measured, not guessed: see docs/decisions/0011-lean-agent-start.md before adding a tool.
+DEFAULT_AGENT_ARGS = (
+    "--strict-mcp-config",
+    "--tools",
+    "Bash,Read,Edit,Write,Glob,Grep,Skill,ToolSearch,AskUserQuestion",
+)
 
 
 class ConfigError(ValueError):
@@ -172,6 +199,10 @@ def defaults(root: str) -> dict[str, Any]:
         "integrators": None,
         "verify": {k: type(v)() for k, v in VERIFY_DEFAULTS.items()},
         "numbered_files": {},
+        "plan_ticks_in_merge": True,
+        "integrator_compact_tokens": 120000,
+        "agent_compact_tokens": 100000,
+        "agent_args": list(DEFAULT_AGENT_ARGS),
         "mode": "single",
         "integrator_pool": [],
     }
@@ -257,6 +288,20 @@ def _numbered_files(path: str, value: Any) -> dict[str, str]:
     return result
 
 
+def _agent_args(path: str, value: Any) -> list[str]:
+    """Validated `agent_args`: a list of non-empty one-line strings (raises ConfigError).
+
+    One line each because `project-config.py agent_args` prints one item per line and
+    start-agent.sh reads them back one argument per line; empty items are refused so that no
+    output means `[]`.
+    """
+    if not isinstance(value, list) or not all(
+        isinstance(v, str) and v and not set(v) & {"\n", "\r", "\0"} for v in value
+    ):
+        raise ConfigError(f"{path}: agent_args must be a list of non-empty one-line strings")
+    return list(value)
+
+
 def valid_branch(name: str) -> bool:
     """Whether `name` is a usable branch name (`git check-ref-format --branch` rules, offline)."""
     return bool(
@@ -268,6 +313,16 @@ def valid_branch(name: str) -> bool:
         and "@{" not in name
         and not re.search(r"[\s~^:?*\[\\\x00-\x1f\x7f]", name)
     )
+
+
+def _check_scalar(path: str, key: str, value: Any) -> None:
+    """Validate a boolean (`plan_ticks_in_merge`) or a count (the `*_compact_tokens`)."""
+    if key == "plan_ticks_in_merge" and not isinstance(value, bool):
+        raise ConfigError(f"{path}: {key} must be true or false, got {value!r}")
+    if key in ("integrator_compact_tokens", "agent_compact_tokens") and (
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+    ):
+        raise ConfigError(f"{path}: {key} must be a non-negative integer (0: off), got {value!r}")
 
 
 def _checked(path: str, key: str, value: Any) -> Any:
@@ -284,9 +339,13 @@ def _checked(path: str, key: str, value: Any) -> Any:
         return _verify_settings(path, value)
     elif key == "numbered_files":
         return _numbered_files(path, value)
+    elif key in ("plan_ticks_in_merge", "integrator_compact_tokens", "agent_compact_tokens"):
+        _check_scalar(path, key, value)
     elif key == "protected_branches":
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
             raise ConfigError(f"{path}: protected_branches must be a list of patterns")
+    elif key == "agent_args":
+        return _agent_args(path, value)
     elif key == "worktree_prefix":
         if not isinstance(value, str) or not PREFIX.fullmatch(value):
             raise ConfigError(
@@ -363,7 +422,7 @@ def main() -> int:
             print(f"project-config: unknown key {args.key!r}", file=sys.stderr)
             return 2
         value = value[part]
-    if isinstance(value, dict) or value is None:
+    if isinstance(value, (dict, bool)) or value is None:
         print(json.dumps(value))
     elif not isinstance(value, list):
         print(value)

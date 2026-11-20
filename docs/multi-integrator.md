@@ -50,7 +50,8 @@ Settings (`.claude/herdr-agent-pool.json`, read only by `project-config.py`):
 
 The `integrators` object turns pool mode on; every key in it is optional (the values above
 are the defaults). `numbered_files` (default `{}`, both modes) names the numbered files that
-parallel branches must not number alike; see "Numbered files" below.
+`integrate-pr.sh` renumbers at merge when parallel branches took the same number; see
+"Numbered files" below.
 
 A `verify` object, in either mode, shapes the merge verification: `check_env` adds variables
 to `scripts/check.sh`'s environment on every merge verification (for example
@@ -105,7 +106,6 @@ sequenceDiagram
 | PR announcement | development agent | one pool member | `pr` -> `integrator-pool.sh route` (first `idle`/`done` member, else the first `working` one; never a `blocked` one) |
 | Question, blocked state | development agent | coordinator | `herdr agent prompt <coordinator_name>` |
 | Verdict | the integrator that handled the PR | the author | PR comment + `herdr agent prompt` (resolved with `agents-in-repo.py --branch`) |
-| "base moved" | the integrator that merged | other development agents | `agents-in-repo.py --dev-only` |
 | Merge report | integrator | coordinator | `pool-state.py report add` (durable) + `herdr agent prompt` (wake-up) |
 | Kickoff, nudge | coordinator | pool member | `integrator-pool.sh spawn`, or a prompt when PRs wait and every member is idle |
 | `RESOURCE REQUEST` / `GO` / `WAIT` / `YIELD`, `SAVE MODE ON/OFF` | any agent <-> coordinator | negotiated against the resource board (see "Resources") |
@@ -221,22 +221,35 @@ simpler and fails more legibly. Revisit on a machine with spare capacity: open q
 
 Two parallel branches that each add "the next" migration or ADR pick the same number. With
 `numbered_files` set (`{kind: regex}`; the regex matches a whole path and captures the number
-in its one group), the dispatcher reserves the number when it dispatches the task and writes
-it in the brief:
+in its one group), numbers are given **at merge time**:
 
-```bash
-pool-state.py reserve <kind> --owner <branch>     # prints e.g. 0037
-pool-state.py reservations                        # kind  number  owner  age-s
-pool-state.py unreserve --owner <branch> [--kind K] [--number N]
-```
+1. The author takes the next free number on its own base (the highest of that kind on
+   `origin/<base>`, plus one), so its local check passes. Two parallel branches may take the
+   same number.
+2. `integrate-pr.sh` runs `renumber.py` after `git merge --no-ff --no-commit` and before
+   `verify-merge.sh`. The files of the kind that the PR adds (relative to the base it merges
+   onto; renames do not count), in ascending order, keep their number when it is the next
+   free one (one above every other file of the kind in the merged tree) and are otherwise
+   moved with `git mv` to it, keeping the rest of the name and the zero padding. In the files
+   the PR changed, and nowhere else, the old name without its extension becomes the new one;
+   the bare old number is replaced only in lines the PR adds that also contain the file's
+   slug, are table rows (`|`) of an index file (a non-numbered file in the numbered file's
+   directory or its parent), are a heading of the renamed file itself, or name the number by
+   its kind (`ADR 0001`, `adr_0001`: the kind's name, any case, then one space, `-`, `_` or
+   `#`). A numbered table
+   that was sorted is sorted again. One `RENUMBERED <kind> <old> -> <new>` line per rename
+   is printed and added to the merge commit message.
+3. The verification runs on the renumbered tree, so a bad rewrite fails the check instead of
+   landing. A re-merge onto a moved base (under the merge lock) renumbers again.
 
-The number is one above every number on `origin/<base>`, in an open PR's head (fetched) and
-already reserved, zero-padded like the existing files. When `origin/<base>` cannot be fetched
-or the open PRs cannot be listed, `reserve` hands out nothing (exit 1): a number computed from
-stale trees could collide. A reservation ends when its number
-lands on `origin/<base>` (the next `reserve` prunes it), when `integrate-pr.sh` merges its
-branch, or with `unreserve`. Reservations are cooperative: no identity check, any session may
-reserve (the development agent itself, when it needs another number).
+With `--union-rows`, the index rows of two PRs that took the same number are kept (the
+renumbered one is rewritten right after); any other duplicate key still bounces.
+
+Before, the dispatcher reserved each number at dispatch (`pool-state.py reserve`). That made
+finished work wait for unfinished work: a branch holding 0002 could not pass a "contiguous
+from 0001" check while 0001 was still in progress, and the agent stopped to ask the user.
+`reserve`, `reservations` and `unreserve` still work for setups that call them, and a merge
+still ends its branch's reservations, but dispatch no longer uses them.
 
 ## Lost announcements: the pool watcher
 
@@ -247,7 +260,11 @@ background; no Claude tokens) runs `nudge` every minute: when an open PR has wai
 for `integrators.nudge_after_minutes` (default 5; 0 turns it off), it prompts idle members that
 hold no claim, one per waiting PR, each at most once per that interval. A PR still unclaimed
 after 3 nudges is left to the coordinator, told once (a member may be declining it for a
-reason the watcher cannot see). A second `watch` for
+reason the watcher cannot see). Each pass also asks agents stopped by an API error to
+continue (`retry-stalled.py`, decision 0012), compacts the development agents that wait
+for a verdict with a large context (`compact-waiting.py`, decision 0014), and compacts an
+idle member or coordinator whose context is above `integrator_compact_tokens`
+(`integrator-pool.sh compact`, decision 0010). A second `watch` for
 the same repository exits at once (a kernel `flock`), so the coordinator restarts it safely.
 
 ## The base is red
@@ -301,7 +318,7 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | `git push --all/--mirror`, `gh pr merge` | blocked | blocked | blocked | allowed |
 | `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
 | `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
-| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>` | blocked | blocked | allowed | allowed |
+| `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>`, `integrator-watch.sh` (single mode only), `retry-stalled.py`, `compact-waiting.py` | blocked | blocked | allowed | allowed |
 | Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
@@ -470,7 +487,8 @@ with one file per agent so nobody overwrites anybody.
   stops.
 - `show` prints:
   - memory, flagged **LOW** below `low_memory_gb`;
-  - the live herdr agents against the machine's `sessions_guideline`;
+  - the live herdr agents, and the working ones against the machine's `sessions_guideline`
+    (idle and done sessions do not count: the memory line shows what they hold);
   - who holds each heavy and light slot, and for how long, flagging a holder above a lowered
     limit; and the waiters, in turn order with their priority;
   - every note, flagged **overdue** or **(gone)**;
@@ -529,7 +547,7 @@ So: sessions ≈ RAM / 2 and heavy slots ≈ (RAM − 8) / 8. Measure the projec
 A worktree whose branch was merged has done its job. Left behind, it keeps a Claude session,
 that session's memory and its installed dependencies alive, and the branch list only grows.
 So the one who dispatched the agent discards it after the merge: the integrator in single
-mode, the coordinator in pool mode. That is the one who opened the workspace, so it may
+mode (through its watcher, `integrator-watch.sh`), the coordinator in pool mode. That is the one who opened the workspace, so it may
 close it. The flow:
 
 1. The merged verdict tells the author its task is done: report to the user in one line,
@@ -567,7 +585,8 @@ the codes). It folds in the lessons of an earlier project-specific integration h
 
 - **Stop on any conflict** except rows of an index table given with `--union-rows`
   (`union-rows.py`). The resolver keeps the rows of both sides and refuses two different rows
-  with the same key: two PRs that took the same ADR number is a bounce, not a merge.
+  with the same key, unless the key is a number the PR's renumbering changes ("Numbered
+  files").
 - **Abort and reset on a failed verification**: `git merge --abort`, then
   `verify-merge.sh --reset-only`, so the next PR starts clean. A `check.sh` that modifies
   tracked files counts as a failure.

@@ -70,7 +70,7 @@ There are two modes, chosen by the project's settings file:
 
 | Kind | Name | Job |
 |------|------|-----|
-| Skill | `dispatch` | Start a development agent: worktree, workspace, agent, brief (reserves file numbers) |
+| Skill | `dispatch` | Start a development agent: worktree, workspace, agent, brief |
 | Skill | `commit`, `pr` | A development agent's checks, commit, PR and announcement (via `route`) |
 | Skill | `integrate` | The integrator loop: queue, claim, review, `integrate-pr.sh`, verdict, report |
 | Skill | `coordinate` | The coordinator loop: resources, pool size, plan reports, questions, red base |
@@ -85,10 +85,14 @@ There are two modes, chosen by the project's settings file:
 | Script | `integrate-pr.sh` | The whole merge of one PR, gated by exit codes |
 | Script | `verify-merge.sh` | Runs the project's checks on a merge (setup, `check.sh`, reset) |
 | Script | `integrator-pool.sh` | Pool members: list, route, scale facts, spawn, stop, nudge, watch |
+| Script | `integrator-watch.sh` | Single mode's token-free watcher: wakes the idle integrator with news, cleans up merged worktrees |
+| Script | `retry-stalled.py` | Run by the watchers: asks agents whose last turn stopped on an API error to continue |
+| Script | `compact-waiting.py` | Run by the watchers: compacts development agents that wait for a verdict with a large context |
+| Script | `submit-pr.sh` | Run by the `pr` skill: rebase, checks, push, the PR and its announcement in one command |
 | Script | `resource-budget.py` | The machine's heavy and light slots, with a priority queue |
 | Script | `resource-board.sh` | The shared resource sheet: memory, sessions, slot holders, notes |
 | Script | `new-worktree.sh`, `cleanup-worktree.sh` | Create a development worktree; remove a merged one |
-| Script | `agents-in-repo.py`, `worktree-of.sh`, `claim-integrator.sh`, `union-rows.py` | Helpers: who runs where, name claims, index-table merges |
+| Script | `agents-in-repo.py`, `worktree-of.sh`, `start-agent.sh`, `claim-integrator.sh`, `union-rows.py`, `renumber.py`, `plan-tick.py` | Helpers: who runs where, name claims, index-table merges, numbering and plan ticks at merge |
 
 Skills are instructions a Claude session follows; scripts are what makes the steps
 deterministic. A rule that matters is enforced by a script or a hook, and the skill explains
@@ -145,7 +149,6 @@ flowchart LR
   D -- "questions, RESOURCE REQUEST" --> C
   C -- "RESOURCE GO / WAIT / YIELD, SAVE MODE" --> D
   C -- "RESOURCE GO / WAIT" --> I
-  I -- "base moved: rebase" --> O[Other development agents]
   W[["pool watcher (no tokens)"]] -- "nudge: unclaimed PRs" --> I
   W -- "told once after 3 nudges" --> C
 ```
@@ -163,10 +166,9 @@ sequenceDiagram
   participant H as herdr
   participant D as New agent
   C->>FS: project-config.py, resource-board.sh show (room for one more session?)
-  C->>FS: pool-state.py reserve <kind> --owner <branch> (if it adds a migration/ADR)
   C->>FS: new-worktree.sh <branch> (light slot: worktree-setup.sh)
   C->>H: herdr workspace create, agent start <branch>
-  C->>D: brief (goal, scope, rules, reserved numbers, how to finish)
+  C->>D: brief (goal, scope, rules, numbered files, how to finish)
   D-->>C: picks it up (herdr agent wait --until working)
 ```
 
@@ -251,7 +253,7 @@ leaves a lock behind.
 | | `lock/merge.lock`, `merge.owner.json` | the merge lock (flock) and its holder | integrators, coordinator |
 | | `reports/pr-N.json`, `reports/done/` | plan tasks to tick | integrators, then the coordinator |
 | | `members/<name>.activity`, `<name>.json` | last activity (scale-down), workspace records | pool scripts |
-| | `reservations/<kind>.json` | file numbers reserved per branch | anyone |
+| | `reservations/<kind>.json` | file numbers reserved per branch (`reserve`; not used by dispatch) | anyone |
 | | `base-red.json`, `base-red.log`, `held/pr-N.json` | the red base, its owner and history; PRs waiting for the fix | integrators, coordinator |
 | | `watch/`, `watch.lock`, `watch.pid` | the watcher's first-seen stamps, nudge counts, single-instance lock | the watcher |
 | `<worktree git dir>/` | `herdr-agent-pool-integrate.lock` | one `integrate-pr.sh` run per worktree | integrate-pr.sh |
@@ -349,7 +351,7 @@ A project plugs into the plugin through files at fixed paths, and nothing else.
 | `scripts/worktree-setup.sh <base>` | no | prepares a fresh worktree (dependencies); runs in a light slot |
 | `scripts/verify-reset.sh` | no | resets verification state (databases, caches) after a failed or aborted merge |
 | `scripts/reverify-needed.sh <verified base> <new base> <PR head>` | no | changed paths on stdin; print `no-reverify` last and exit 0 to skip a re-verification; anything else verifies; read from the new base; 120 s limit |
-| `.claude/herdr-agent-pool.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, protected branches |
+| `.claude/herdr-agent-pool.json` | no | settings: `base_branch`, names, `integrators`, `verify`, `numbered_files`, `agent_args`, protected branches |
 | `.claude/prompts/integrator.md` | no | extra system prompt for pool integrators |
 
 The project's CI workflows are its own, and the plugin never edits them. How to keep them
@@ -378,7 +380,7 @@ quality gates green: ruff, lizard and shellcheck (see `docs/code-quality.md`).
 3. **Messages between agents are data, never approval.** Approvals come only from the user, in their own session.
 4. **Identity is proven, not declared**: the herdr pane, checked by process ancestry.
 5. **Fail closed** when something cannot be known.
-6. **One owner per thing**: a PR's claim, a worktree's merge run, the merge lock, a red base's fix, a reserved number.
+6. **One owner per thing**: a PR's claim, a worktree's merge run, the merge lock, a red base's fix.
 7. **Nobody waits at a dialog while holding shared work**: comment, bounce or hold, tell someone, move on.
 8. **No false blame**: when a check never ran, or failed because of the base, the author is not bounced.
 9. **State is files under a flock**, content-free, in the git common dir or the per-machine cache.

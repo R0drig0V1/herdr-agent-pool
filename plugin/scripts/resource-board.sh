@@ -110,7 +110,7 @@ cmd_prune() {
 }
 
 cmd_show() {
-    local lim total avail slots guideline low agents f n used now
+    local lim total avail slots guideline low agents f n w used now
     now=$(date +%s)
     lim=$("$dir/resource-budget.py" limits 2>/dev/null) || lim='{"heavy_slots": 1, "sessions_guideline": 0, "low_memory_gb": 0, "source": "invalid resources.json"}'
     slots=$(jq -r .heavy_slots <<<"$lim"); guideline=$(jq -r .sessions_guideline <<<"$lim"); low=$(jq -r .low_memory_gb <<<"$lim")
@@ -124,7 +124,10 @@ cmd_show() {
     fi
     agents=$(live_agents)
     n=$([[ -n "$agents" ]] && jq length <<<"$agents" || echo "?")
-    echo "- Live herdr agents: $n (guideline for this machine: $guideline)$([[ "$n" != "?" && "$n" -gt "$guideline" ]] && echo " - **over the guideline**")"
+    # The guideline counts working agents only: idle and done sessions (often of other
+    # repositories) hold memory, which the memory line already shows, but do no work.
+    w=$([[ -n "$agents" ]] && jq '[.[] | select(.agent_status == "working")] | length' <<<"$agents" || echo "?")
+    echo "- Live herdr agents: $n, $w working (guideline for this machine: $guideline working)$([[ "$w" != "?" && "$w" -gt "$guideline" ]] && echo " - **over the guideline**")"
     echo "- Limits: $(jq -r .source <<<"$lim")"
     echo
     # Every holder, also those above a lowered limit, and the waiters in turn order.
