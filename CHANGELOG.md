@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-20
+
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).
 
 ### Changed
