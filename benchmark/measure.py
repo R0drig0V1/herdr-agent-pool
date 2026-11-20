@@ -12,8 +12,9 @@ Usage:
 
 For each session with activity in the window it prints one line: turns (API responses),
 tokens (input, cache writes, cache reads, output), messages it sent to other agents
-(`herdr agent prompt` in its Bash calls), messages it received (user turns that start with
-herdr's agent-message header), the skills it ran and its first and last timestamps. Then the
+(`herdr agent prompt` in its Bash calls, or `submit-pr.sh`, which announces a PR), messages
+it received (user turns that start with herdr's agent-message header), the skills it ran and
+its first and last timestamps. Then the
 totals, the agent-minutes of the development agents (sum of first-to-last spans) and the
 ideal wall time with five agents (agent-minutes / 5).
 
@@ -33,6 +34,7 @@ from datetime import datetime
 from typing import Any
 
 HEADER = "[herdr message from agent"
+SENT = re.compile(r"herdr agent prompt\s+\S|submit-pr\.sh")
 SLOTS = 5
 COUNTED = ("turns", "in", "cache_write", "cache_read", "out", "sent", "received")
 
@@ -79,9 +81,7 @@ def measure(path: str, since: str, until: str) -> dict[str, Any] | None:
                 counts["out"] += usage.get("output_tokens", 0)
             for name, inp in tool_calls(msg):
                 if name == "Bash":
-                    counts["sent"] += len(
-                        re.findall(r"herdr agent prompt\s+\S", inp.get("command", ""))
-                    )
+                    counts["sent"] += len(SENT.findall(inp.get("command", "")))
                 elif name == "Skill":
                     skills[inp.get("skill", "?")] += 1
         elif row.get("type") == "user" and HEADER in text_of(msg.get("content"))[:200]:
