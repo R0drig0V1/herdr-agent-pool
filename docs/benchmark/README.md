@@ -98,6 +98,7 @@ All on 2026-11-19, the same seed, Opus 5.5 with effort high, at most 5 developme
 | 9 | as run 6, plus the watcher and compaction of the integrator (decision 0010) and the lean start of development agents (decision 0011) | 20.3 | 16.9 | 1.6 / 5.8 | 8 | 8 | 32 | 101 | 1.24 M | **27.3 M** |
 | 10 | as run 9, plus mentions rewritten at a renumber (decision 0009's amendment) | 26.7 | 27.5 | 2.6 / 5.9 | 9 | 9 | 56 | 103 | 1.33 M | 29.8 M |
 | 11 | as run 10, plus one command to submit a task (decision 0013) and retries after an API error (decision 0012) | not comparable (the machine slept about 8 hours) | - | - | 9 | 8 | 50 | 118 | 1.40 M | **25.1 M** |
+| 12 | as run 11, repeated for the times | 20.7 | 14.2 | 1.8 / 4.6 | 9 | 9 | 37 | 96 | **1.22 M** | **24.4 M** |
 
 Notes per run:
 
@@ -176,6 +177,16 @@ and 4.
   of the development cache reads): three turns even without a bounce (the report, then the
   merged verdict's board note and final line). The integrator was compacted twice, at
   138,000 and 148,000 tokens.
+- **Run 12.** Run 11 again, with the machine awake: no API error, no pause. The tokens and
+  turns repeat run 11 (353 development turns in both; 24.4 M cache reads against 25.1 M), so
+  the saving of `submit-pr.sh` holds: 11% fewer cache reads than run 9. The wall time does
+  not move: 20.7 minutes against 20.3 in runs 6 and 9, although the agents worked less (71
+  agent-minutes, an ideal wall of 14.2 minutes against 16.9). The other 6.5 minutes are not
+  agent work: the nine bounces all fell on six of the first nine pull requests (most of
+  them conflicts in code added to the same module, item 6), and the last three tasks ran one at a time because each
+  depends on the one before (minutes 13 to 20). The integrator was compacted once, at
+  167,000 tokens. A local branch left by an earlier run made the integrator pick another
+  branch name for one task; it changed nothing else.
 
 ## What the runs show
 
@@ -227,7 +238,8 @@ and 4.
 - One run per configuration: differences of a few minutes are noise; the large ones (plan,
   lander wake-up, append conflicts) are not. Runs 9 and 10 ran almost the same plugin and
   differ by 6 minutes of wall time (30%) and 9% of cache reads: the tokens per turn repeat
-  well, the wall time does not.
+  well, the wall time does not. Runs 11 and 12 ran the same plugin and differ by 3% of cache
+  reads and have the same number of development turns.
 - Run 2 changed the plugin and the plan at once; runs 3 and 4 reuse its plan, so 2 against 4
   compares the plugins and 2 against 3 isolates the lander.
 - Agent-minutes count a session from its first to its last activity, including waits for a
