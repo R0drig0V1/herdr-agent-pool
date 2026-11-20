@@ -36,6 +36,12 @@ Lessons from a project's first night in pool mode (3 integrators, about 15 agent
   reserves numbers; `pool-state.py reserve` still works but is not used by it. In a measured
   run, a reserved 0002 failed a "contiguous from 0001" check while 0001 was unfinished, and
   the agent stopped to ask the user.
+- One command submits a task (decision 0013): `submit-pr.sh` rebases on the base, runs the
+  checks in a heavy slot, pushes, opens the PR and announces it to the integrator; after a
+  bounce the same command pushes the fix and announces again. The `pr` skill is now a commit
+  and that command, with one exit code per outcome. Measured before: a development agent
+  spent about 9 of its 17 turns per task on those steps as separate commands. The checks run
+  once, on the rebased tree, and their output goes to a log instead of the agent's context.
 - Agents stopped by an API error are asked to continue (decision 0012): a network cut or a
   machine that slept ends an agent's turn, and it then waited until someone wrote to it (a
   measured run stood still for two and a half hours). The watchers now run
