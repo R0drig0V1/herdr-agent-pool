@@ -1475,7 +1475,7 @@ check "retry: a development agent may not run it (exit 1)" \
 rm -f "$dtx"
 # compact-waiting.py: a development agent that waits for a verdict with a large context.
 cw="$scripts/compact-waiting.py"
-cpass() { (cd "$single" && env HERDR_ENV=1 "$@" "$cw" 2>&1); }
+cpass() { (cd "$single" && env HERDR_ENV=1 "$cw" 2>&1); }
 dev_transcript() {  # dev_transcript <context tokens>: wdirty's last turn sent that many
     mkdir -p "$(dirname "$dtx")"
     jq -nc '{type: "user", message: {role: "user", content: "x"}}' > "$dtx"
