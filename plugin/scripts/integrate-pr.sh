@@ -7,7 +7,11 @@
 # a failed verification, and keep the head branch when it moved during the verification (a
 # premature deletion closed PRs twice).
 #
-# Usage: integrate-pr.sh <PR number> [--union-rows PATH]...
+# Usage: integrate-pr.sh <PR number> [--union-rows PATH]... [--author-ok LOGIN]
+#
+# A PR opened by another GitHub account than the one `gh` is logged in as (a contributor, a
+# bot) is refused (exit 2) until the user says yes to that PR: then pass --author-ok with the
+# PR author's login. The yes is asked again for every such PR.
 #
 # Only for CLAUDE_ROLE=integrator, and inside herdr only for the session whose herdr agent is
 # the integrator's name; in pool mode that agent must also be one of `integrator_pool`, and
@@ -24,7 +28,14 @@
 #     against the base branch from this repository, and origin/<branch> equal to the PR's head.
 #  2. Start from origin/<base> (pool: detached checkout; single: fast-forward of <base>), then
 #     `git merge --no-ff --no-commit` the PR head. A conflict stops it (exit 3), unless every
-#     conflicted file was given with --union-rows and union-rows.py resolves it.
+#     conflicted file was given with --union-rows and union-rows.py resolves it. Then, with
+#     `numbered_files` set, renumber.py moves the numbered files the PR adds to the next free
+#     numbers on this base and rewrites their names in the PR's files (one
+#     `RENUMBERED <kind> <old> -> <new>` line each, also in the merge commit message); a
+#     re-merge onto a moved base renumbers again. Single mode (unless the setting
+#     `plan_ticks_in_merge` is false): plan-tick.py ticks the tasks of the PR body's "Plan
+#     tasks completed" section in docs/phases/*.md, in the same merge (`PLAN-TICKED <id>` /
+#     `PLAN-UNTICKED <id>` lines, also in the merge commit message); a re-merge ticks again.
 #  3. verify-merge.sh (--here in pool mode), output in a log file; the exit code is the
 #     verdict. A failure aborts the merge and resets the verification state (exit 4). check.sh
 #     must not change tracked files (that is a failure too).
@@ -65,6 +76,44 @@ here_dir=$(cd "$(dirname "$0")" && pwd)
 pc="$here_dir/project-config.py"
 ps="$here_dir/pool-state.py"
 
+# Shared by both halves, during a merge in progress (HEAD is the base). resolve_rows <paths
+# given with --union-rows, one per line>: each conflicted file among them goes through
+# union-rows.py, which may keep two index rows with a number renumber.py is about to change;
+# exit 0 when no conflict is left.
+resolve_rows() {
+    local f k keys=()
+    if [[ -n "${IPR_NUMBERED:-}" && "$IPR_NUMBERED" != "{}" ]]; then
+        while IFS= read -r k; do [[ -z "$k" ]] || keys+=(--allow-key "$k"); done \
+            < <("$here_dir/renumber.py" keys --kinds "$IPR_NUMBERED")
+    fi
+    while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        if grep -qxF -- "$f" <<<"$1" && "$here_dir/union-rows.py" ${keys[@]+"${keys[@]}"} "$f"; then
+            git add -- "$f"; echo "resolved $f mechanically (union of table rows)"
+        else
+            echo "conflict: $f" >&2
+        fi
+    done < <(git diff --name-only --diff-filter=U)
+    [[ -z "$(git diff --name-only --diff-filter=U)" ]]
+}
+# renumber_merge <message file>: renumber the PR's numbered files (renumber.py apply), tick
+# its plan tasks (plan-tick.py, single mode: $IPR_BODY holds the PR body), print their lines
+# and write the message: <message file>.head plus those lines. Only renumber.py fails it: a
+# failed plan-tick.py leaves the ticks to the integrator.
+renumber_merge() {
+    local out="" ticks=""
+    if [[ -n "${IPR_NUMBERED:-}" && "$IPR_NUMBERED" != "{}" ]]; then
+        out=$("$here_dir/renumber.py" apply --kinds "$IPR_NUMBERED") || return 1
+    fi
+    if [[ -n "${IPR_BODY:-}" ]]; then
+        ticks=$("$here_dir/plan-tick.py" --stage < "$IPR_BODY") \
+            || { ticks=""; echo "warning: plan-tick.py failed: tick the plan by hand" >&2; }
+        out=$(printf '%s\n%s' "$out" "$ticks" | sed '/^$/d')
+    fi
+    { cat "$1.head"; [[ -z "$out" ]] || printf '\n%s\n' "$out"; } > "$1"
+    [[ -z "$out" ]] || printf '%s\n' "$out"
+}
+
 # Under the merge lock: re-entered through `pool-state.py lock run -- integrate-pr.sh
 # --push-under-lock`, with the state of the outer run in the environment (exported below).
 # Every failure has its own exit code (no `set -e`, which would turn them all into 1).
@@ -75,8 +124,14 @@ if [[ "${1:-}" == --push-under-lock ]]; then
         if [[ "$IPR_MODE" == pool ]]; then git checkout --quiet --detach "$1" || fail 6 "cannot check out $1"
         else git reset --quiet --hard "$1" || fail 6 "cannot reset to $1"; fi
         if ! git merge --quiet --no-ff --no-commit "$IPR_HEAD_SHA" >/dev/null 2>&1; then
+            if ! resolve_rows "$IPR_UNION" || ! git diff --cached --check >/dev/null 2>&1; then
+                git merge --abort 2>/dev/null
+                fail 3 "the PR no longer merges cleanly onto $1"
+            fi
+        fi
+        if ! renumber_merge "$IPR_MSG"; then
             git merge --abort 2>/dev/null
-            fail 3 "the PR no longer merges cleanly onto $1"
+            fail 3 "the PR's numbered files could not be renumbered on $1 (renumber.py failed)"
         fi
     }
     # The project's scripts/reverify-needed.sh <verified base> <new base> <PR head>, taken from
@@ -163,12 +218,13 @@ sys.exit(0 if all(any(fnmatch.fnmatchcase(p, q) for q in pats) for p in paths) e
     fail 6 "git push failed: $out"
 fi
 
-usage() { echo "usage: integrate-pr.sh <PR number> [--union-rows PATH]..." >&2; exit 1; }
+usage() { echo "usage: integrate-pr.sh <PR number> [--union-rows PATH]... [--author-ok LOGIN]" >&2; exit 1; }
 N="${1:-}"; [[ "$N" =~ ^[0-9]+$ ]] || usage; shift
-union=()
+union=() author_ok=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --union-rows) [[ $# -ge 2 ]] || usage; union+=("$2"); shift 2 ;;
+        --author-ok) [[ $# -ge 2 ]] || usage; author_ok="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -181,6 +237,8 @@ base=$(jq -r .base_branch <<<"$config")
 max_reverify=$(jq -r '.integrators.max_reverify // 3' <<<"$config")
 exempt=$(jq -c '.integrators.reverify_exempt_paths // ["docs/phases/*.md"]' <<<"$config")
 locked_minutes=$(jq -r '.integrators.locked_reverify_minutes // 60' <<<"$config")
+export IPR_NUMBERED; IPR_NUMBERED=$(jq -c '.numbered_files // {}' <<<"$config")
+ticks_on=$(jq -r 'if .mode == "single" and .plan_ticks_in_merge != false then 1 else 0 end' <<<"$config")
 if [[ "$mode" == pool ]]; then me="${HERDR_AGENT_POOL_NAME:-}"; else me=$(jq -r .integrator_name <<<"$config"); fi
 [[ -n "$me" ]] || { echo "pool mode: HERDR_AGENT_POOL_NAME is not set (spawn integrators with integrator-pool.sh)" >&2; exit 1; }
 
@@ -235,12 +293,18 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
 fi
 [[ -z "$(git status --porcelain)" ]] || { git status --short >&2; stop "the worktree $top is not clean"; }
 
-pr=$(gh pr view "$N" --json number,title,body,headRefName,headRefOid,baseRefName,state,isCrossRepository) \
+pr=$(gh pr view "$N" --json number,title,body,headRefName,headRefOid,baseRefName,state,isCrossRepository,author) \
     || stop "gh pr view $N failed"
 B=$(jq -r .headRefName <<<"$pr"); head=$(jq -r .headRefOid <<<"$pr"); title=$(jq -r .title <<<"$pr")
 [[ "$(jq -r .state <<<"$pr")" == OPEN ]] || stop "PR #$N is not open"
 [[ "$(jq -r .baseRefName <<<"$pr")" == "$base" ]] || stop "PR #$N targets $(jq -r .baseRefName <<<"$pr"), not $base"
 [[ "$(jq -r .isCrossRepository <<<"$pr")" == false ]] || stop "PR #$N comes from a fork: integrate it by hand"
+# Someone else's PR: only with the user's yes for this PR (--author-ok <its author>).
+author=$(jq -r '.author.login // ""' <<<"$pr")
+self=$(gh api user -q .login 2>/dev/null) || stop "cannot tell which GitHub account gh uses (gh api user failed)"
+if [[ "$author" != "$self" && "$author_ok" != "$author" ]]; then
+    stop "PR #$N was opened by ${author:-an unknown account}, not by $self: ask the user before working on it, then rerun with --author-ok ${author:-LOGIN}"
+fi
 git fetch --quiet --prune origin "$base" "refs/heads/$B:refs/remotes/origin/$B" || stop "git fetch failed"
 [[ "$(git rev-parse "origin/$B")" == "$head" ]] \
     || stop "origin/$B ($(git rev-parse --short "origin/$B")) is not the PR head (${head:0:12}) yet: retry"
@@ -276,21 +340,19 @@ base_sha=$(git rev-parse HEAD)
 if git merge-base --is-ancestor "$head" "$base_sha"; then
     requeue nothing-to-merge 9 "${head:0:12} is already in origin/$base"
 fi
+export IPR_UNION; IPR_UNION=$(printf '%s\n' ${union[@]+"${union[@]}"})
 if ! git merge --quiet --no-ff --no-commit "$head" >/dev/null 2>&1; then
-    while IFS= read -r f; do
-        [[ -n "$f" ]] || continue
-        mechanical=false
-        for u in ${union[@]+"${union[@]}"}; do [[ "$f" == "$u" ]] && mechanical=true; done
-        if $mechanical && "$here_dir/union-rows.py" "$f"; then
-            git add -- "$f"; echo "resolved $f mechanically (union of table rows)"
-        else
-            echo "conflict: $f" >&2
-        fi
-    done < <(git diff --name-only --diff-filter=U)
+    resolve_rows "$IPR_UNION"
     remaining=$(git diff --name-only --diff-filter=U)
     [[ -z "$remaining" ]] || finish_bounce conflict 3 "conflicts with origin/$base in: ${remaining//$'\n'/ }"
     git diff --cached --check >/dev/null 2>&1 || finish_bounce conflict 3 "conflict markers left after resolution"
 fi
+# Number at merge: the PR's numbered files take the next free numbers on this base.
+msg="$git_dir/herdr-agent-pool-merge-msg-$N"
+printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg.head"
+export IPR_BODY=""   # single mode: the plan ticks in the merge read the PR body from here
+if [[ $ticks_on == 1 ]]; then IPR_BODY="$msg.body"; jq -r '.body // ""' <<<"$pr" > "$IPR_BODY"; fi
+renumber_merge "$msg" || finish_bounce conflict 3 "the PR's numbered files could not be renumbered (renumber.py failed)"
 
 # 3. Verify, heartbeating the claim meanwhile (a verification can take longer than a TTL).
 log="$git_dir/herdr-agent-pool-verify-$N.log"
@@ -340,8 +402,6 @@ verified_or_out() {  # verified_or_out <what was merged>: bounce on a failure, r
 }
 verified_or_out "origin/$base"
 
-msg="$git_dir/herdr-agent-pool-merge-msg-$N"
-printf 'Merge pull request #%s from %s\n\n%s\n' "$N" "$B" "$title" > "$msg"
 export IPR_BASE="$base" IPR_MODE="$mode" IPR_HEAD_SHA="$head" IPR_EXEMPT="$exempt" IPR_MSG="$msg"
 export IPR_PS="$ps" IPR_N="$N" IPR_ME="$me"
 export IPR_STATE="$git_dir/herdr-agent-pool-newbase-$N"
@@ -407,7 +467,7 @@ if [[ "$remote_now" == "$head" && "$pr_head" == "$head" ]] && git merge-base --i
 fi
 [[ "$branch" == kept ]] && echo "branch $B KEPT: remote ${remote_now:-?}, PR head ${pr_head:-?}, merged ${head}; the PR stays open if it has new commits"
 
-# The branch's number reservations (pool-state.py reserve) are spent: its files landed.
+# Number reservations (pool-state.py reserve; dispatch no longer makes them) are spent.
 "$ps" unreserve --owner "$B" >/dev/null 2>&1 || true
 # The fix of a red base (pool-state.py base-red assign --branch) just landed: green again.
 "$ps" base-red clear --owner "$me" --if-branch "$B" --reason "PR #$N ($B), the assigned fix, merged" 2>/dev/null \
@@ -419,6 +479,6 @@ if [[ "$mode" == pool ]]; then
     "$ps" report add "$N" --sha "$merged" --owner "$me" --tasks "$tasks" >/dev/null
     "$ps" release "$N" --owner "$me" >/dev/null
 fi
-rm -f "$msg" "$IPR_STATE"
+rm -f "$msg" "$msg.head" "$msg.body" "$IPR_STATE"
 result merged "PR #$N as $merged onto origin/$base; branch $B $branch"
 exit 0

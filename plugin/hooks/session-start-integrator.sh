@@ -51,6 +51,16 @@ plugin_enabled "$repo_root" || exit 0
 plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 claim="$plugin_root/scripts/claim-integrator.sh"
 
+# Single mode's token-free watcher starts with the integrator's session, detached: it retries
+# agents stopped by an API error, so it must not wait for the integrator's first turn. It
+# refuses pool mode, a second one exits at once, and it ends when the integrator is gone.
+# HERDR_AGENT_POOL_NO_WATCH=1 turns this start off (the tests set it).
+watch="$plugin_root/scripts/integrator-watch.sh"
+if [[ "$role" == integrator && -z "$member" && -x "$watch" && -z "${HERDR_AGENT_POOL_NO_WATCH:-}" ]] && mkdir -p "$common_dir/herdr-agent-pool" 2>/dev/null; then
+    ( cd "$repo_root" && exec "$watch" ) </dev/null >>"$common_dir/herdr-agent-pool/integrator-watch.log" 2>&1 &
+    disown
+fi
+
 say() {  # say <context>
     jq -n --arg ctx "$1" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
     exit 0

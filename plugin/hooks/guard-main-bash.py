@@ -291,11 +291,13 @@ def tool_need(prog: str, args: list[str]) -> str | None:
         ):
             return "locked_push"
         return "locked_push" if args[:2] in (["report", "add"], ["report", "done"]) else None
-    if prog == "integrator-pool.sh" and sub in (["spawn"], ["stop"], ["nudge"], ["watch"]):
+    pool_manage = (["spawn"], ["stop"], ["nudge"], ["compact"], ["watch"])
+    if prog == "integrator-pool.sh" and sub in pool_manage:
         return "manage"
     if prog == "cleanup-worktree.sh" and sub and sub != ["--list"]:
         return "manage"
-    return None
+    managed = ("integrator-watch.sh", "retry-stalled.py", "compact-waiting.py")
+    return "manage" if prog in managed else None
 
 
 def check_tools(prog: str, args: list[str], cwd: str, session: str) -> str | None:

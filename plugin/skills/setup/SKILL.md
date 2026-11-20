@@ -15,6 +15,11 @@ integration commands from `herdr integration` (herdr 0.9.5).
 
 Check everything first, report, then ask before each change. Any "no" skips that step.
 
+The installer (`install.sh`) already does the herdr, integration and plugin checks when a
+project is set up, so this skill is not a required install step: it repeats them from inside
+Claude Code, after a plugin update or to diagnose a project, and adds the project and CI
+checks below.
+
 ## 1. herdr binary
 
 ```bash
@@ -81,14 +86,23 @@ ls "$root"/scripts/check.sh "$root"/scripts/integrator.sh "$root"/.claude/prompt
 
 - This plugin not enabled, or project files missing: offer the installer from this plugin's
   repository (`install.sh --dry-run` first, then without it after the user confirms).
+- **"Plugin not found in marketplace"** when installing, or the plugin enabled in the settings
+  but its skills missing: the marketplace must be registered as `herdr-agent-pool`. Run
+  `claude plugin marketplace list --json`. An entry with another name whose `repo` is
+  `R0drig0V1/herdr-agent-pool` (a machine set up before the rename) makes
+  `claude plugin marketplace add` answer "already on disk" and add nothing. Explain that
+  `claude plugin marketplace remove <that name>` also uninstalls the plugins installed from
+  it on this machine, and only after the user confirms run it, then
+  `claude plugin marketplace add R0drig0V1/herdr-agent-pool` and
+  `claude plugin install herdr-agent-pool@herdr-agent-pool --scope project`.
 - **The old `multi-agent` plugin also enabled**: both plugins' hooks would run, and the old
   ones send sessions to `/multi-agent:worktree` + `EnterWorktree`, which this plugin replaces
   with `dispatch`. Show the user the `enabledPlugins` line to remove (or set to `false`) and
   change it only after they confirm.
-- **Names from before 2026-11** (the plugin was `multi-agent-herdr@claude-code-herdr`; README,
+- **Names from before 2026-11** (the plugin was `multi-agent-herdr@claude-code-herdr`; docs/reference.md,
   "Renamed from multi-agent-herdr"): the plugin no longer reads them. A project that only has
   `.claude/multi-agent-herdr.json` runs on the defaults (single mode), and old state or limits
-  directories are ignored. Report each one found with its move from the README, and make the
+  directories are ignored. Report each one found with its move from docs/reference.md, and make the
   moves only after the user confirms, with every session of the project stopped.
   `multi-agent-herdr@claude-code-herdr` enabled may also be the separate two-level plugin:
   check which repository the `claude-code-herdr` marketplace entry names before changing it.

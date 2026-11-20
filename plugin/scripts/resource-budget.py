@@ -37,7 +37,8 @@ Limits, machine-wide, from `~/.config/herdr-agent-pool/resources.json` (or the f
     {"heavy_slots": 2, "light_slots": 2, "sessions_guideline": 12, "low_memory_gb": 2.4}
 
 `heavy_slots` and `light_slots` are enforced; the other two are the guidelines the resource
-board shows and the coordinator weighs (live sessions for this RAM; the free memory below which
+board shows and the coordinator weighs (working sessions for this RAM; idle and done ones do
+not count; the free memory below which
 it declares save mode). Defaults from the machine's RAM (R GB): heavy_slots =
 max(1, (R - 8) // 8), light_slots = 2, sessions_guideline = max(2, R // 2), low_memory_gb =
 R / 10; a 24 GB machine gets 2, 2, 12 and 2.4. `$HERDR_AGENT_POOL_HEAVY_SLOTS` overrides
@@ -49,6 +50,11 @@ Slot state lives in `~/.cache/herdr-agent-pool/resources` (or
 its own `$TMPDIR`. Each held slot has an owner file (`slot-<i>.json` for heavy,
 `light-<i>.json` for light: label, cwd, agent, pid, since, priority) and each waiter a ticket
 in `queue-<pool>/`; `status` and resource-board.sh show both.
+
+Every `run` that queued leaves one JSON line in `runs.jsonl` of that directory when it ends:
+pool, label, priority, agent, cwd, `queued` (epoch seconds), `waited` and `ran` (seconds; `ran`
+is null when CMD never ran) and `exit`. It answers "was the slot the bottleneck?" after the
+fact (`benchmark/slot-waits.py` sums it up); the file is rotated to `runs.jsonl.1` past 1 MB.
 
 The command gets `$HERDR_AGENT_POOL_SLOT_COUNT`, the pool's limit when it was admitted, so a
 project can size its parallelism (e.g. test workers = cores / slots).
@@ -92,6 +98,8 @@ PRIORITIES = {"merge": 0, "plan": 1, "normal": 2}
 ROLE_PRIORITY = {"merge": "integrator", "plan": "coordinator"}  # who may ask for it
 AGING_MINUTES = 20
 POLL_SECONDS = 2.0
+RUN_LOG = "runs.jsonl"
+RUN_LOG_MAX_BYTES = 1_000_000
 
 
 class Interrupted(Exception):
@@ -411,10 +419,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         return subprocess.call(command)
     label = args.label or " ".join(command)[:80]
     priority = effective_priority(args.priority)
+    queued = time.time()
+    record: dict[str, Any] = {
+        "pool": args.pool,
+        "label": label,
+        "priority": priority,
+        "agent": os.environ.get("HERDR_AGENT_POOL_NAME", ""),
+        "cwd": os.getcwd(),
+        "queued": round(queued, 1),
+    }
     taken = admit(args, label, priority)
     if isinstance(taken, int):
+        log_run(dict(record, waited=round(time.time() - queued, 1), ran=None, exit=taken))
         return taken
     slot, fd, slots = taken
+    started = time.time()
+    code: int | None = None
     owner_file = os.path.join(state_dir(), f"{POOLS[args.pool][0]}-{slot}.json")
     owner = {
         "label": label,
@@ -429,11 +449,26 @@ def cmd_run(args: argparse.Namespace) -> int:
         env["HERDR_AGENT_POOL_SLOT"] = str(slot)
     try:
         write_json(owner_file, owner)
-        return subprocess.call(command, env=env)
+        code = subprocess.call(command, env=env)
+        return code
     finally:
         with contextlib.suppress(OSError):
             os.remove(owner_file)
         os.close(fd)
+        ran = round(time.time() - started, 1)
+        log_run(dict(record, waited=round(started - queued, 1), ran=ran, exit=code))
+
+
+def log_run(record: dict[str, Any]) -> None:
+    """Append one line to the run log; the log must never be why a check fails."""
+    try:
+        path = os.path.join(state_dir(), RUN_LOG)
+        if os.path.exists(path) and os.path.getsize(path) > RUN_LOG_MAX_BYTES:
+            os.replace(path, f"{path}.1")
+        with open(path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
 
 
 def ago(since: Any) -> str:

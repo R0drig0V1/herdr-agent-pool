@@ -42,7 +42,9 @@ Commands:
                                         the next free number of a numbered_files kind (e.g. a
                                         migration or an ADR), printed zero-padded, reserved
                                         for BRANCH: above every number on origin/<base>, in an
-                                        open PR's head and already reserved
+                                        open PR's head and already reserved. No longer used by
+                                        dispatch (integrate-pr.sh renumbers at merge, see
+                                        renumber.py); kept for setups that call it
     unreserve --owner BRANCH [--kind KIND] [--number N]
                                         give back BRANCH's reservations (all, or one)
     reservations                        one line per reservation: kind number owner age-s
