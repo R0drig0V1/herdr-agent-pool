@@ -319,7 +319,7 @@ also compares recently merged PRs with the known reports (`pool-state.py report 
 | `git push --force`/`--delete`, `+` or `:` refspec on a protected branch | blocked | blocked, even under the lock | blocked, even under the lock | allowed |
 | `integrate-pr.sh`; `pool-state.py` claim, release, heartbeat, bounce, lock run, report add/done | blocked | allowed | allowed | allowed |
 | `integrator-pool.sh` spawn/stop, `cleanup-worktree.sh <branch>`, `integrator-watch.sh` (single mode only), `retry-stalled.py`, `compact-waiting.py` | blocked | blocked | allowed | allowed |
-| Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
+| Setting `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT`, `HERDR_AGENT_POOL_LIGHT_SLOT`, `HERDR_AGENT_POOL_RESOURCE_BUDGET` or `HERDR_ENV` in a command (`VAR=x cmd`, `env`, `export`) | blocked | blocked | blocked | allowed |
 | herdr input commands (`pane run`, `send-keys`...) | blocked | allowed* | allowed* | allowed* |
 | `herdr agent prompt` | only the coordinator and the pool (single mode: the integrator) | anyone | anyone | anyone |
 | Anything above, while `.claude/herdr-agent-pool.json` is invalid | blocked | blocked | blocked | blocked (fail closed; the file itself may be edited) |
@@ -442,7 +442,10 @@ Resources are therefore **negotiated**, not computed. The coordinator is the arb
 **The hard floor: heavy slots** (`resource-budget.py run`). At most `heavy_slots` heavy
 commands run at once on the machine, across every agent and project.
 
-- `verify-merge.sh` runs `check.sh` through it, and so do the `commit` and `pr` skills.
+- `verify-merge.sh` runs `check.sh` through it, and so do the `commit` and `pr` skills,
+  in the pool the project's `checks.branch_pool` names: heavy by default, light for a lean
+  branch check, which then escalates its own heavy step through
+  `$HERDR_AGENT_POOL_RESOURCE_BUDGET` (decision 0015). Merge verifications are always heavy.
 - Worktree setup (`worktree-setup.sh`, from `verify-merge.sh`, `new-worktree.sh` and
   `integrator-pool.sh spawn`) goes through a separate **light** pool (`light_slots`,
   default 2): a warm-cache install never waits behind a test suite, yet a burst of new
@@ -451,8 +454,10 @@ commands run at once on the machine, across every agent and project.
 - It stays code because a conversation cannot stop a process that is already allocating
   memory. When memory is scarce, agents answer late or not at all.
 - Slots are `flock`ed files in `~/.cache/herdr-agent-pool/resources/`, so a crashed holder
-  frees its slot. A nested call (`$HERDR_AGENT_POOL_SLOT` set) runs at once instead of
-  deadlocking.
+  frees its slot. Nesting is per pool: inside a heavy slot (`$HERDR_AGENT_POOL_SLOT` set)
+  any nested call runs at once, inside a light slot (`$HERDR_AGENT_POOL_LIGHT_SLOT`) a nested
+  light call does, so neither deadlocks; a nested heavy call inside a light slot waits for a
+  heavy slot.
 - Waiters **queue**. Each one writes a ticket; a free slot goes to the first ticket in
   priority order, oldest first within a priority: `merge` (an integrator's
   `verify-merge.sh`, honoured only for CLAUDE_ROLE=integrator), then `plan` (the
@@ -472,7 +477,8 @@ commands run at once on the machine, across every agent and project.
   queue, no bounce). Do not stop waiters to make them see a new limit: they see it anyway.
 - Its limits:
   - it binds only the commands run through it, not a suite an agent starts by hand;
-  - setting `HERDR_AGENT_POOL_SLOT` would skip it, so the guard blocks that;
+  - setting `HERDR_AGENT_POOL_SLOT` (or `HERDR_AGENT_POOL_LIGHT_SLOT`, or pointing
+    `HERDR_AGENT_POOL_RESOURCE_BUDGET` elsewhere) would skip it, so the guard blocks that;
   - when its state directory cannot be created it warns and runs the command anyway, so the
     floor never makes a verification fail;
   - an invalid `resources.json` makes every wrapped command fail. `resource-budget.py

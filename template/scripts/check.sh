@@ -10,6 +10,12 @@
 # verify worktree: it must not bind fixed ports, and every database, container or directory
 # it writes outside the worktree must be private to the run (e.g. a random database name).
 #
+# A development agent's run holds one of the machine's heavy slots, or a light one when
+# .claude/herdr-agent-pool.json sets "checks": {"branch_pool": "light"} (a lean branch
+# check). A light check wraps its own heavy step, if it has one, in
+#   "$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy -- <step>
+# (unset when this runs by hand: run the step directly then; docs/reference.md, "Resources").
+#
 # TODO: replace the placeholder below with this project's commands, e.g.
 #   uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q
 #   pnpm lint && pnpm typecheck && pnpm test

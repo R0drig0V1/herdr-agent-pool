@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Time spent waiting for a heavy slot during a benchmark run.
+"""Time spent waiting for a heavy (or light) slot during a benchmark run.
 
 Reads the run log of the plugin's resource-budget.py (`runs.jsonl` in its state directory,
 one line per command that queued for a slot) and answers "was the slot the bottleneck?":
@@ -9,7 +9,11 @@ Rows are grouped by who ran the check: `merge` is an integrator's merge verifica
 (priority merge), `plan` the coordinator's own checks, `dev` everything else. A row belongs
 to the run when its working directory contains REPO and it queued inside the time window.
 
-Usage: slot-waits.py REPO --since ISO [--until ISO] [--log PATH] [--top N]
+`--pool light` reads the light pool instead: worktree setups and, with the project's
+`checks.branch_pool` set to `light`, the development agents' checks. It tells whether lean
+checks delay a new agent's setup (docs/decisions/0015-branch-check-pool.md).
+
+Usage: slot-waits.py REPO --since ISO [--until ISO] [--log PATH] [--top N] [--pool heavy|light]
 
     slot-waits.py textkit-sandbox --since 2026-11-20T13:08:13Z
 
@@ -85,12 +89,13 @@ def main() -> int:
     parser.add_argument("--until", default="", help="ISO time the run ended (default: now)")
     parser.add_argument("--log", default=DEFAULT_LOG, help=f"run log (default: {DEFAULT_LOG})")
     parser.add_argument("--top", type=int, default=5, help="longest waits to list")
+    parser.add_argument("--pool", choices=("heavy", "light"), default="heavy")
     args = parser.parse_args()
     until = epoch(args.until) if args.until else float("inf")
     rows = read_rows([f"{args.log}.1", args.log], args.repo, epoch(args.since), until)
-    heavy = [r for r in rows if r.get("pool") == "heavy"]
+    heavy = [r for r in rows if r.get("pool") == args.pool]
     if not heavy:
-        print("no heavy run in the log for that repository and window", file=sys.stderr)
+        print(f"no {args.pool} run in the log for that repository and window", file=sys.stderr)
         return 1
     groups: dict[str, list[dict[str, Any]]] = {"dev": [], "merge": [], "plan": []}
     for row in heavy:

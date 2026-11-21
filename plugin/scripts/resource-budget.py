@@ -9,13 +9,21 @@ goes, no more than `heavy_slots` heavy commands (a full test suite, a build) run
 this computer, across every agent and project of the user.
 
 `verify-merge.sh` runs the project's `scripts/check.sh` through `run`, and the `commit` and
-`pr` skills run the checks the same way. Worktree setup (`scripts/worktree-setup.sh`, from
-`new-worktree.sh`, `verify-merge.sh` and `integrator-pool.sh spawn`) uses the separate
-`light` pool (`light_slots`), so a warm-cache install never waits behind a test suite.
+`pr` skills run the checks the same way, in the pool the project's `checks.branch_pool`
+setting names (project-config.py; heavy by default). Worktree setup
+(`scripts/worktree-setup.sh`, from `new-worktree.sh`, `verify-merge.sh` and
+`integrator-pool.sh spawn`) uses the separate `light` pool (`light_slots`), so a warm-cache
+install never waits behind a test suite.
 
-Slots are `flock`ed files, so the kernel frees the slot of a crashed holder. A command started
-inside a heavy slot (`$HERDR_AGENT_POOL_SLOT` set) runs at once, so a nested call cannot
-deadlock.
+Slots are `flock`ed files, so the kernel frees the slot of a crashed holder. Nested calls,
+per pool: a command started inside a heavy slot (`$HERDR_AGENT_POOL_SLOT` set) runs any nested
+`run` at once, and one inside a light slot (`$HERDR_AGENT_POOL_LIGHT_SLOT` set) runs a nested
+light `run` at once, so neither can deadlock on its own slot. A nested *heavy* `run` inside a
+light slot does wait for a heavy slot: that is how a check in the light pool escalates its
+heavy step (decision 0015). Every command run through `run` gets
+`$HERDR_AGENT_POOL_RESOURCE_BUDGET`, the absolute path of this script, to call it that way:
+
+    "$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy -- <the full suite>
 
 Waiters queue. Each waiter writes a ticket; under a queue lock, a free slot goes to the first
 ticket in priority order, oldest first within a priority:
@@ -94,6 +102,10 @@ EXIT_INTERRUPTED = 120
 EXIT_TIMEOUT = 124
 KEYS = ("heavy_slots", "light_slots", "sessions_guideline", "low_memory_gb")
 POOLS = {"heavy": ("slot", "heavy_slots"), "light": ("light", "light_slots")}  # file prefix, key
+# Set in a holder's command: a nested `run` of these pools runs at once (heavy covers both).
+HOLDER_ENV = {"heavy": "HERDR_AGENT_POOL_SLOT", "light": "HERDR_AGENT_POOL_LIGHT_SLOT"}
+NESTED_FREE = {"heavy": ("heavy", "light"), "light": ("light",)}
+SELF_ENV = "HERDR_AGENT_POOL_RESOURCE_BUDGET"
 PRIORITIES = {"merge": 0, "plan": 1, "normal": 2}
 ROLE_PRIORITY = {"merge": "integrator", "plan": "coordinator"}  # who may ask for it
 AGING_MINUTES = 20
@@ -405,18 +417,28 @@ def admit(args: argparse.Namespace, label: str, priority: str) -> tuple[int, int
     return taken
 
 
+def held_here(pool: str) -> bool:
+    """Whether this process runs inside a slot that already covers a `run` of `pool`."""
+    return any(os.environ.get(HOLDER_ENV[held]) for held, ok in NESTED_FREE.items() if pool in ok)
+
+
+def command_env(**extra: str) -> dict[str, str]:
+    """The command's environment: ours, this script's path (SELF_ENV) and `extra`."""
+    return dict(os.environ, **{SELF_ENV: os.path.abspath(__file__)}, **extra)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         print("resource-budget: run needs a command after --", file=sys.stderr)
         return 1
-    if os.environ.get("HERDR_AGENT_POOL_SLOT"):  # already inside a heavy slot: no deadlock
-        return subprocess.call(command)
+    if held_here(args.pool):  # already inside a slot that covers this pool: no deadlock
+        return subprocess.call(command, env=command_env())
     try:
         state_dir()
     except OSError as exc:  # the floor must never be the reason a check cannot run
         print(f"resource-budget: warning: no state directory ({exc}); unbudgeted", file=sys.stderr)
-        return subprocess.call(command)
+        return subprocess.call(command, env=command_env())
     label = args.label or " ".join(command)[:80]
     priority = effective_priority(args.priority)
     queued = time.time()
@@ -444,9 +466,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "agent": os.environ.get("HERDR_AGENT_POOL_NAME", ""),
         "since": time.time(),
     }
-    env = dict(os.environ, HERDR_AGENT_POOL_SLOT_COUNT=str(slots))
-    if args.pool == "heavy":
-        env["HERDR_AGENT_POOL_SLOT"] = str(slot)
+    env = command_env(HERDR_AGENT_POOL_SLOT_COUNT=str(slots), **{HOLDER_ENV[args.pool]: str(slot)})
     try:
         write_json(owner_file, owner)
         code = subprocess.call(command, env=env)

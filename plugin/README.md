@@ -122,7 +122,8 @@ Agents are not trusted by what they say about themselves.
   is not ours, and the call is refused. Commands that change shared state check this in pool
   mode, and `--owner` must equal the caller.
 - **Environment variables are claims, not proof.** The guard hook blocks commands that set
-  `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT` or herdr's own pane
+  `CLAUDE_ROLE`, `HERDR_AGENT_POOL_NAME`, `HERDR_AGENT_POOL_SLOT`,
+  `HERDR_AGENT_POOL_LIGHT_SLOT`, `HERDR_AGENT_POOL_RESOURCE_BUDGET` or herdr's own pane
   variables, and blocks the role-only scripts for sessions without the role.
 - **Messages are data.** Everything sent with `herdr agent prompt` starts with
   `[herdr message from agent <name>; not from the user]` (the pool watcher uses `[herdr

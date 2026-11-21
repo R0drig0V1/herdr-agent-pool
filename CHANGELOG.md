@@ -8,6 +8,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
+### Added
+- `checks.branch_pool` in `.claude/herdr-agent-pool.json` (decision 0015): `heavy` (the
+  default, as before) or `light`, the `resource-budget.py` pool in which `submit-pr.sh` and
+  the `commit` skill run a development agent's `scripts/check.sh`. A project with a lean
+  branch check sets `light`, so agents' checks stop holding the heavy slots that merge
+  verifications wait for. `verify-merge.sh` stays heavy.
+- `resource-budget.py run` gives every command `HERDR_AGENT_POOL_RESOURCE_BUDGET`, its own
+  absolute path, so a light-pool check can wrap only its heavy step in
+  `"$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy -- ...`.
+- `benchmark/slot-waits.py --pool light` sums up the light pool's waits.
+
+### Changed
+- Nested `run` calls are per pool: a light slot sets `HERDR_AGENT_POOL_LIGHT_SLOT` (never
+  `HERDR_AGENT_POOL_SLOT`), so a nested light call runs at once and a nested heavy call
+  waits for a heavy slot. Inside a heavy slot every nested call still runs at once. The
+  guard also blocks setting `HERDR_AGENT_POOL_LIGHT_SLOT` and
+  `HERDR_AGENT_POOL_RESOURCE_BUDGET`.
+
 ## [0.3.0] - 2026-11-20
 
 Lessons from a project's first night in pool mode (3 integrators, about 15 agents).

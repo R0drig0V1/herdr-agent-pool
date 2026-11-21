@@ -54,6 +54,13 @@ Keys (all optional; a missing file means every default):
   top of `check_env` (a docs-only fast lane; off while `docs_only_paths` is empty). Names
   must look like `[A-Za-z_][A-Za-z0-9_]*` and may not start with `CLAUDE_`, `HERDR_` or
   `HERDR_AGENT_POOL_` (identity variables); values are strings without newlines.
+* `checks` (default `{"branch_pool": "heavy"}`): how a development agent's own checks run.
+  `branch_pool` (`heavy` or `light`) is the resource-budget.py pool in which `submit-pr.sh`
+  and the `commit` skill run `scripts/check.sh` on a branch. A project whose branch check is
+  lean (lint, types, the affected tests) sets `light`, so it stops holding a heavy slot that
+  merge verifications wait for; the check can still escalate a heavy step itself through
+  `$HERDR_AGENT_POOL_RESOURCE_BUDGET` (docs/decisions/0015-branch-check-pool.md). Merge
+  verifications (`verify-merge.sh`) always run in the heavy pool.
 * `plan_ticks_in_merge` (default `true`): single mode only. integrate-pr.sh ticks the plan
   tasks a PR lists under "Plan tasks completed" in `docs/phases/*.md` inside the merge
   commit (plan-tick.py); `false` leaves the ticking to the integrator. Pool mode ignores it
@@ -125,6 +132,8 @@ POOL_DEFAULTS: dict[str, Any] = {
 ZERO_OFF = ("locked_reverify_minutes", "nudge_after_minutes")
 KIND = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 VERIFY_DEFAULTS: dict[str, Any] = {"check_env": {}, "docs_only_paths": [], "docs_only_env": {}}
+CHECKS_DEFAULTS: dict[str, Any] = {"branch_pool": "heavy"}
+BRANCH_POOLS = ("heavy", "light")  # resource-budget.py's pools
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RESERVED_ENV = ("CLAUDE_", "HERDR_", "HERDR_AGENT_POOL_")
 DERIVED = ("mode", "integrator_pool")
@@ -199,6 +208,7 @@ def defaults(root: str) -> dict[str, Any]:
         "integrators": None,
         "verify": {k: type(v)() for k, v in VERIFY_DEFAULTS.items()},
         "numbered_files": {},
+        "checks": dict(CHECKS_DEFAULTS),
         "plan_ticks_in_merge": True,
         "integrator_compact_tokens": 120000,
         "agent_compact_tokens": 100000,
@@ -263,6 +273,24 @@ def _verify_settings(path: str, value: Any) -> dict[str, Any]:
             result[key] = list(item)
         else:
             result[key] = _env_map(path, key, item)
+    return result
+
+
+def _checks_settings(path: str, value: Any) -> dict[str, Any]:
+    """Validated `checks` object with its defaults filled in (raises ConfigError)."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: checks must be an object, got {value!r}")
+    result = dict(CHECKS_DEFAULTS)
+    for key, item in value.items():
+        if key.startswith("$"):
+            continue
+        if key not in CHECKS_DEFAULTS:
+            known = ", ".join(CHECKS_DEFAULTS)
+            raise ConfigError(f"{path}: unknown key checks.{key} (known: {known})")
+        if item not in BRANCH_POOLS:
+            pools = " or ".join(f'"{p}"' for p in BRANCH_POOLS)
+            raise ConfigError(f"{path}: checks.branch_pool must be {pools}, got {item!r}")
+        result[key] = item
     return result
 
 
@@ -339,6 +367,8 @@ def _checked(path: str, key: str, value: Any) -> Any:
         return _verify_settings(path, value)
     elif key == "numbered_files":
         return _numbered_files(path, value)
+    elif key == "checks":
+        return _checks_settings(path, value)
     elif key in ("plan_ticks_in_merge", "integrator_compact_tokens", "agent_compact_tokens"):
         _check_scalar(path, key, value)
     elif key == "protected_branches":

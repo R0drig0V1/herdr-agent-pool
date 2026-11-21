@@ -22,7 +22,8 @@ hooks="$root/plugin/hooks"
 scripts="$root/plugin/scripts"
 export CLAUDE_PLUGIN_ROOT="$root/plugin"
 export HERDR_AGENT_POOL_NO_WATCH=1   # the SessionStart hook starts no watcher in the tests
-unset CLAUDE_ROLE HERDR_AGENT_POOL_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK HERDR_ENV HERDR_AGENT_POOL_SLOT
+unset CLAUDE_ROLE HERDR_AGENT_POOL_NAME CLAUDECODE CHECK_COUNT CHECK_HOOK HERDR_ENV HERDR_AGENT_POOL_SLOT \
+    HERDR_AGENT_POOL_LIGHT_SLOT HERDR_AGENT_POOL_RESOURCE_BUDGET
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # Not under a temporary directory: the Bash guard allows writes there on purpose. Each run
@@ -196,7 +197,9 @@ for json in '{"integrators": {"min": 3, "max": 2}}' '{"integrators": {"max": 17}
             '{"numbered_files": {"ADR": "docs/(1)"}}' '{"numbered_files": {"adr": "docs/("}}' '{"numbered_files": []}' \
             '{"plan_ticks_in_merge": "no"}' '{"plan_ticks_in_merge": 0}' '{"integrator_compact_tokens": -1}' \
             '{"integrator_compact_tokens": "120000"}' '{"integrator_compact_tokens": true}' '{"integrator_compact_tokens": 1.5}' \
-            '{"agent_compact_tokens": -1}' '{"agent_compact_tokens": "100000"}'; do
+            '{"agent_compact_tokens": -1}' '{"agent_compact_tokens": "100000"}' \
+            '{"checks": {"branch_pool": "check"}}' '{"checks": {"branch_pool": ""}}' '{"checks": {"pool": "light"}}' \
+            '{"checks": "light"}'; do
     printf '%s\n' "$json" > "$bad/.claude/herdr-agent-pool.json"
     "$pc" --root "$bad" >/dev/null 2>&1; status=$?
     check "project-config: rejects $json" [ "$status" == 1 ]
@@ -209,6 +212,10 @@ check "project-config: compacts the integrator above 120000 tokens by default" \
     [ "$("$pc" --root "$work/nowhere" integrator_compact_tokens)" == 120000 ]
 check "project-config: compacts a waiting development agent above 100000 tokens by default" \
     [ "$("$pc" --root "$work/nowhere" agent_compact_tokens)" == 100000 ]
+check "project-config: branch checks run in the heavy pool by default" \
+    [ "$("$pc" --root "$work/nowhere" checks.branch_pool)" == heavy ]
+printf '%s\n' '{"checks": {"branch_pool": "light", "$comment": "lean check"}}' > "$bad/.claude/herdr-agent-pool.json"
+check "project-config: checks.branch_pool light is valid" [ "$("$pc" --root "$bad" checks.branch_pool)" == light ]
 printf '%s\n' '{"integrator_compact_tokens": 0}' > "$bad/.claude/herdr-agent-pool.json"
 check "project-config: integrator_compact_tokens 0 (off) is valid" [ "$("$pc" --root "$bad" integrator_compact_tokens)" == 0 ]
 # The template's coordinator.sh repeats the default name rule.
@@ -259,6 +266,8 @@ expect 2 "guard: posing as an integrator with a prefix" "$g" "$(bash_cmd "CLAUDE
 expect 2 "guard: setting the member name through env"   "$g" "$(bash_cmd 'env HERDR_AGENT_POOL_NAME=integrator-proj-1 ls' "$d1")"
 expect 2 "guard: export CLAUDE_ROLE"                    "$g" "$(bash_cmd 'export CLAUDE_ROLE=coordinator' "$d1")"
 expect 2 "guard: skipping the heavy-slot floor"         "$g" "$(bash_cmd 'HERDR_AGENT_POOL_SLOT=1 scripts/check.sh' "$d1")"
+expect 2 "guard: skipping the light-slot floor"         "$g" "$(bash_cmd 'HERDR_AGENT_POOL_LIGHT_SLOT=0 scripts/check.sh' "$d1")"
+expect 2 "guard: redirecting a check's escalation"      "$g" "$(bash_cmd 'HERDR_AGENT_POOL_RESOURCE_BUDGET=/bin/echo scripts/check.sh' "$d1")"
 expect 0 "guard: other variables are fine"              "$g" "$(bash_cmd 'FOO=1 env BAR=2 ls' "$d1")"
 # The re-review's probes: env options that take an argument, wrappers in front, interpreters.
 for probe in "env -u FOO CLAUDE_ROLE=integrator $ipr 3" \
@@ -1100,7 +1109,20 @@ check "resource-budget: a half-written limits file keeps the waiter waiting" kil
 kill -TERM "$waiter"; wait "$waiter"; rc=$?
 check "resource-budget: a waiter stopped by SIGTERM exits 120 (the command never ran)" [ "$rc" == 120 ]
 check "resource-budget: the stopped waiter's ticket is gone" not queued 1
-slots 1; touch "$release_file.h4"; wait; rm -f "$release_file".*
+# Nesting is per pool: a light-pool check escalates its heavy step through the exported path.
+slots 1   # h4 still holds the heavy pool
+check "resource-budget: a nested heavy run inside a light slot waits for a heavy slot" \
+    exits 124 "$rb" run --pool light --timeout 2 -- sh -c '"$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy --timeout 1 -- true'
+check "resource-budget: a nested light run inside a light slot does not wait for its own slot" \
+    "$rb" run --pool light --timeout 2 -- sh -c '"$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool light --timeout 1 -- true'
+touch "$release_file.h4"; wait; rm -f "$release_file".*
+check "resource-budget: the command gets the wrapper's absolute path" \
+    bash -c '[[ "$("$1" run --pool light -- sh -c "echo \$HERDR_AGENT_POOL_RESOURCE_BUDGET")" == "$1" ]]' _ "$rb"
+out=$("$rb" run --pool light --label lean -- sh -c \
+    '"$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy --label full --timeout 5 -- sh -c "echo heavy=\${HERDR_AGENT_POOL_SLOT:-none} light=\${HERDR_AGENT_POOL_LIGHT_SLOT:-none}"' 2>&1)
+check "resource-budget: a light check escalates to a free heavy slot and holds both" [ "$out" == "heavy=0 light=0" ]
+check "resource-budget: the escalation is logged as a light run and a heavy run" \
+    bash -c 'jq -es "any(.label == \"lean\" and .pool == \"light\" and .exit == 0) and any(.label == \"full\" and .pool == \"heavy\" and .exit == 0)" "$1" >/dev/null' _ "$runlog"
 
 # verify-merge.sh: the project's check variables, and exit 120 when the check never ran.
 vm="$work/vm"; git init --quiet -b main "$vm"; mkdir -p "$vm/.claude" "$vm/scripts" "$vm/docs" "$vm/src"
@@ -1652,6 +1674,18 @@ git -C "$swt" add -A && git -C "$swt" commit --quiet -m "break the check"
 n=$(announces); out=$(submit); rc=$?
 check "submit: a red check stops before the push (exit 4) and shows its last lines" \
     bash -c '[[ $1 == 4 && "$2" == *"CHECK exit 1"*"boom: 1 test failed"* && "$2" != *PUSHED* && $3 == "$4" ]]' _ "$rc" "$out" "$(announces)" "$n"
+check "submit: by default the branch check runs in the heavy pool" \
+    bash -c 'jq -es "[.[] | select(.label == \"check feat/sub\")] | length > 0 and all(.pool == \"heavy\")" "$1" >/dev/null' _ "$runlog"
+# checks.branch_pool light: the check runs in the light pool and escalates its heavy step.
+echo '{"checks": {"branch_pool": "light"}}' > "$single/.claude/herdr-agent-pool.json"
+printf '#!/bin/sh\necho "in light slot ${HERDR_AGENT_POOL_LIGHT_SLOT:-none}"\nexec "$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy --label "full suite" -- true\n' > "$swt/scripts/check.sh"
+git -C "$swt" add -A && git -C "$swt" commit --quiet -m "lean check"
+out=$(submit); rc=$?
+check "submit: checks.branch_pool light runs the check in the light pool" \
+    bash -c '[[ $1 == 0 && "$2" == *"CHECK exit 0"*"ANNOUNCED"* ]] && jq -es "last(.[] | select(.label == \"check feat/sub\")).pool == \"light\"" "$3" >/dev/null' _ "$rc" "$out" "$runlog"
+check "submit: the light check's own heavy step got a heavy slot" \
+    bash -c 'jq -es "any(.label == \"full suite\" and .pool == \"heavy\" and .exit == 0)" "$1" >/dev/null' _ "$runlog"
+rm -f "$single/.claude/herdr-agent-pool.json"
 rm -f "$FAKE_GH/list-open.json"; unset FAKE_PROMPT_FILE
 
 echo

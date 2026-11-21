@@ -161,12 +161,15 @@ POOL_ROLES = {
     "integrator": frozenset({"herdr", "locked_push"}),
 }
 # Variables the workflow trusts for identity: setting one in a command would let any session
-# pose as an integrator or the coordinator (or skip the heavy-slot floor).
+# pose as an integrator or the coordinator (or skip the heavy or light slot floor: the slot
+# markers, and the wrapper path a light-pool check escalates through).
 PROTECTED_ENV = frozenset(
     {
         "CLAUDE_ROLE",
         "HERDR_AGENT_POOL_NAME",
         "HERDR_AGENT_POOL_SLOT",
+        "HERDR_AGENT_POOL_LIGHT_SLOT",
+        "HERDR_AGENT_POOL_RESOURCE_BUDGET",
         "HERDR_ENV",
         # herdr's own pane variables: `herdr pane current --current` honours HERDR_PANE_ID.
         "HERDR_PANE_ID",

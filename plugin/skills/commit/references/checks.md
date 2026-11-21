@@ -1,6 +1,6 @@
 <!--
 Reference of the commit and pr skills: the two rare cases around the project checks. Read when
-`pool-state.py base-red show` prints a banner, when the wait for a heavy slot blocks something
+`pool-state.py base-red show` prints a banner, when the wait for a slot blocks something
 urgent, or when the wrapper exits 124.
 -->
 
@@ -18,11 +18,12 @@ banner names failing tests and the one agent that owns their fix.
 - Rebase after the fix lands.
 - Show the banner to the user.
 
-## Heavy slots
+## Slots
 
-The checks run inside one of the machine's heavy slots (`resource-budget.py run`). Every agent
-on this computer shares a small number of them, so a full test suite may first wait ("waiting
-for one of N heavy slot(s)").
+The checks run inside one of the machine's heavy slots (`resource-budget.py run`), or a light
+one when the project's `checks.branch_pool` is `light` (a lean branch check; its own heavy
+step, if any, then waits for a heavy slot inside it). Every agent on this computer shares a
+small number of them, so a check may first wait ("waiting for one of N heavy slot(s)").
 
 - Let it wait. Never run the suite outside the wrapper, and never several suites at once.
 - `"${CLAUDE_PLUGIN_ROOT}/scripts/resource-board.sh" show` shows who holds each slot.
