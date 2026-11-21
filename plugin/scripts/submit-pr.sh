@@ -21,7 +21,8 @@
 #      is not touched (exit 6: ask the user).
 #   3. `git fetch --prune origin` and `git rebase origin/<base>`. A conflict leaves the rebase
 #      in progress and lists the files (exit 3).
-#   4. The checks, `scripts/check.sh` inside a heavy slot (resource-budget.py), on the rebased
+#   4. The checks, `scripts/check.sh` inside a slot of the pool the project's
+#      `checks.branch_pool` names (resource-budget.py; heavy by default), on the rebased
 #      tree; skipped when this exact tree already passed here. Their output goes to a log
 #      (<git dir>/herdr-agent-pool-check.log); a failure prints its last lines (exit 4). The
 #      base-red banner is printed when the base is red.
@@ -34,7 +35,7 @@
 #
 # Exit codes: 0 submitted and announced; 1 usage, settings, the place, nothing to submit, or
 # a command that failed; 2 uncommitted changes; 3 rebase conflict; 4 the checks failed (or no
-# heavy slot in time: 124 from the wrapper is reported as 4 with its code); 5 pushed, not
+# slot in time: 124 from the wrapper is reported as 4 with its code); 5 pushed, not
 # announced; 6 someone else's PR; 7 the push was rejected. Needs git, gh, jq and herdr.
 set -uo pipefail
 
@@ -54,6 +55,7 @@ done
 # 1. Place.
 config=$("$dir/project-config.py") || exit 1
 base=$(jq -r .base_branch <<<"$config")
+branch_pool=$(jq -r '.checks.branch_pool // "heavy"' <<<"$config")
 top=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
 cd "$top" || exit 1
 git_dir=$(git rev-parse --absolute-git-dir)
@@ -125,12 +127,12 @@ elif [[ ! -x scripts/check.sh ]]; then
 else
     banner=$("$dir/pool-state.py" base-red show 2>/dev/null)
     [[ -z "$banner" ]] || echo "$banner"
-    "$dir/resource-budget.py" run --label "check $branch" -- scripts/check.sh > "$log" 2>&1; rc=$?
+    "$dir/resource-budget.py" run --pool "$branch_pool" --label "check $branch" -- scripts/check.sh > "$log" 2>&1; rc=$?
     if [[ $rc != 0 ]]; then
         echo "CHECK exit $rc (log: $log); its last lines:"
         tail -n 40 "$log"
         [[ -z "$banner" ]] || echo "The base is red: read skills/commit/references/checks.md before fixing anything."
-        [[ $rc != 124 ]] || echo "Exit 124: no heavy slot in time, nothing ran. Do not run the suite another way."
+        [[ $rc != 124 ]] || echo "Exit 124: no $branch_pool slot in time, nothing ran. Do not run the suite another way."
         exit 4
     fi
     echo "$tree" > "$checked"

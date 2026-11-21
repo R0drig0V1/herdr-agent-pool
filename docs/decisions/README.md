@@ -27,3 +27,4 @@ after changing it, measure it the same way and record the result.
 | [0012](0012-retry-agents-stopped-by-an-api-error.md) | Ask agents stopped by an API error to continue | accepted |
 | [0013](0013-submit-in-one-command.md) | Submit a task in one command | accepted, measured (run 11) |
 | [0014](0014-compact-agents-that-wait-for-a-verdict.md) | Compact development agents that wait for a verdict | accepted, to be measured |
+| [0015](0015-branch-check-pool.md) | A project chooses the pool of its branch checks | accepted, to be measured |

@@ -21,9 +21,10 @@ it, and do not run the full checks first, the next step does.
 
 ## 2. Submit
 
-One command rebases on the base, runs the checks in a heavy slot, pushes, opens the PR and
-announces it to this repository's integrator. The body follows `references/body.md` (read it
-once per session; its "Plan tasks completed" section ticks the plan at merge).
+One command rebases on the base, runs the checks in a shared slot (heavy, or light when the
+project's `checks.branch_pool` says so), pushes, opens the PR and announces it to this
+repository's integrator. The body follows `references/body.md` (read it once per session;
+its "Plan tasks completed" section ticks the plan at merge).
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/submit-pr.sh" --title "<conventional title>" \

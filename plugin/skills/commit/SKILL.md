@@ -27,14 +27,16 @@ git log --oneline -10   # match the existing style
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/pool-state.py" base-red show      # prints nothing while the base is green
-"${CLAUDE_PLUGIN_ROOT}/scripts/resource-budget.py" run --label "check $(git branch --show-current)" -- scripts/check.sh; echo "exit=$?"
+pool=$("${CLAUDE_PLUGIN_ROOT}/scripts/project-config.py" checks.branch_pool) &&
+"${CLAUDE_PLUGIN_ROOT}/scripts/resource-budget.py" run --pool "$pool" --label "check $(git branch --show-current)" -- scripts/check.sh; echo "exit=$?"
 ```
 
 - Fix or report failures. Do not commit red checks unless the user explicitly says so.
 - A `BASE ... IS RED` banner: show it to the user and read
   `${CLAUDE_PLUGIN_ROOT}/skills/commit/references/checks.md` first. Never fix the tests it
   names in your branch, unless you are the owner it names.
-- The checks may first wait for one of the machine's shared heavy slots: let it wait. Never
+- The checks may first wait for one of the machine's shared slots (heavy, or light when the
+  project's `checks.branch_pool` says so): let it wait. Never
   run the suite outside the wrapper or several suites at once. A wait that blocks something
   urgent, or exit 124: same reference.
 - `scripts/check.sh` missing, or it prints "no checks configured": tell the user once.

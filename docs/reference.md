@@ -85,6 +85,7 @@ per-repository default applies):
 | `worktree_prefix` | `<repo>-` | development worktrees are `../<worktree_prefix><name>` |
 | `coordinator_name` | `coordinator-<repo>` (same rule) | pool mode: the coordinator's herdr name (`scripts/coordinator.sh`) |
 | `verify` | every field empty | merge verifications: `check_env` (variables for `scripts/check.sh`, e.g. a fast lane), `docs_only_paths` and `docs_only_env` (added when every changed path matches) |
+| `checks` | `{"branch_pool": "heavy"}` | a development agent's own checks: `branch_pool` (`heavy` or `light`) is the pool in which `submit-pr.sh` and the `commit` skill run `scripts/check.sh` on a branch. `light` suits a lean branch check (lint, types, the affected tests), which then stops holding a heavy slot that merge verifications wait for; its heavy step, if it has one, escalates itself ([Resources](#resources-per-machine)). `verify-merge.sh` always runs in the heavy pool ([decision 0015](decisions/0015-branch-check-pool.md)) |
 | `integrators` | absent (single mode) | an object turns on **pool mode**: `min` (1), `max` (3, at most 16), `scale_up_when_active_agents_gt` (5), `scale_down_idle_minutes` (30), `claim_ttl_minutes` (60), `max_reverify` (3), `reverify_exempt_paths` (`["docs/phases/*.md"]`), `locked_reverify_minutes` (60; 0 off), `nudge_after_minutes` (5; 0 off); members are `<integrator_name>-<n>` ([docs/multi-integrator.md](multi-integrator.md)) |
 | `numbered_files` | `{}` | numbered files such as migrations and ADRs, `{kind: regex}` with one group for the number (e.g. `{"adr": "docs/decisions/(\\d{4})-.*\\.md"}`); authors take the next free number on their base, and `integrate-pr.sh` renumbers a PR's new files at merge when another branch took that number (file, index row, links; a `RENUMBERED` line each), before the verification |
 | `integrator_compact_tokens` | `120000` | when an idle integrator's context (its last turn's prompt, read from its Claude Code transcript) is above this many tokens, its watcher types `/compact` with what to keep into it, at most once per idle period and once every 10 minutes; `0` turns it off. Single mode: the integrator (`integrator-watch.sh`). Pool mode: each member and the coordinator (`integrator-pool.sh compact`, run by `watch`) |
@@ -123,12 +124,40 @@ Limits shared by every agent of every project on the computer, in
 
 `heavy_slots` and `light_slots` are enforced: `verify-merge.sh` and the `commit`/`pr` skills
 run the project's checks through `resource-budget.py run`, at most `heavy_slots` at once, and
-worktree setup goes through the separate light pool. Waiters queue: merge verifications
+worktree setup goes through the separate light pool. A project whose branch check is lean
+sets `checks.branch_pool` to `light`, so development agents' checks run in the light pool
+and only merge verifications compete for the heavy slots. Waiters queue: merge verifications
 first, then the coordinator's checks, then everyone else, oldest first; a changed limit
 applies to waiters at once. Everything else is negotiated: agents note what they run on the resource board
 (`resource-board.sh note|clear|show|prune`), send `RESOURCE REQUEST`s to the coordinator,
 which answers `GO`, `WAIT` or `YIELD` and declares save mode when memory is low
 ([docs/multi-integrator.md](multi-integrator.md), "Resources").
+
+Every command `resource-budget.py run` starts gets these variables:
+
+| Variable | Value |
+|----------|-------|
+| `HERDR_AGENT_POOL_RESOURCE_BUDGET` | the absolute path of `resource-budget.py`, so a check can wrap one of its own steps |
+| `HERDR_AGENT_POOL_SLOT_COUNT` | the pool's limit when the command was admitted (e.g. test workers = cores / slots) |
+| `HERDR_AGENT_POOL_SLOT` | inside a heavy slot: its index. Any nested `run` then runs at once |
+| `HERDR_AGENT_POOL_LIGHT_SLOT` | inside a light slot: its index. A nested light `run` runs at once; a nested heavy `run` waits for a heavy slot |
+
+A check in the light pool escalates its heavy step (the project's "run everything" mode)
+this way; the variable is unset when someone runs `scripts/check.sh` by hand, so fall back
+to running the step directly:
+
+```bash
+full=(uv run pytest -q)                                  # the heavy step
+if [[ -n "${HERDR_AGENT_POOL_RESOURCE_BUDGET:-}" ]]; then
+    "$HERDR_AGENT_POOL_RESOURCE_BUDGET" run --pool heavy --label "full suite" -- "${full[@]}"
+else
+    "${full[@]}"
+fi
+```
+
+The escalated check keeps its light slot while it waits for the heavy one. The guard blocks
+commands that set `HERDR_AGENT_POOL_SLOT`, `HERDR_AGENT_POOL_LIGHT_SLOT` or
+`HERDR_AGENT_POOL_RESOURCE_BUDGET`.
 
 ## What changes in single mode
 
