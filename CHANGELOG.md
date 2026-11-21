@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
 ### Added
 - `checks.branch_pool` in `.claude/herdr-agent-pool.json` (decision 0015): `heavy` (the
   default, as before) or `light`, the `resource-budget.py` pool in which `submit-pr.sh` and
